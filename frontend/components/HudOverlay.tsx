@@ -3,7 +3,8 @@
 import { useEffect, useRef } from "react";
 import type { Decision, Pose } from "@/lib/contract";
 
-const MARKER_FADE_MS = 1500;
+// Decisions arrive every ~2 s; keep markers visible about that long, then fade.
+const MARKER_FADE_MS = 3000;
 const ARROWS: Record<string, string> = { W: "↑", S: "↓", A: "←", D: "→" };
 const LOOK_ARROWS: Record<string, string> = { left: "↶", right: "↷", up: "⤒", down: "⤓" };
 
@@ -109,7 +110,7 @@ export function HudOverlay({ decision, receivedAt, trail, stats }: Props) {
             <div className="text-lg leading-tight">{decision.reason}</div>
             {decision.priority && <div className="text-xs uppercase text-slate-400">Priority: {decision.priority}</div>}
           </div>
-          <span className="ml-2 rounded bg-slate-700 px-2 py-0.5 font-mono text-xs">
+          <span className="ml-2 shrink-0 whitespace-nowrap rounded bg-slate-700 px-2 py-0.5 font-mono text-xs">
             {decision.source} · {Math.round(decision.latency_ms)} ms
           </span>
         </div>

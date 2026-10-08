@@ -17,6 +17,7 @@ from pydantic import BaseModel, ValidationError
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+from .autopilot import live_decision  # noqa: E402
 from .mock_agent import mock_decision  # noqa: E402
 from .models import (  # noqa: E402
     AudioTrigger,
@@ -107,7 +108,9 @@ async def decide(ep: Episode, frame: Frame, offline: bool):
     if AGENT_MODE == "mock":
         await asyncio.sleep(0.05)
         return mock_decision(ep)
-    raise NotImplementedError(f"AGENT_MODE={AGENT_MODE} not implemented yet (P3)")
+    if AGENT_MODE == "live":
+        return await live_decision(ep, frame.jpeg_b64)
+    raise NotImplementedError(f"AGENT_MODE={AGENT_MODE}")
 
 
 connections: set[Connection] = set()
@@ -212,14 +215,16 @@ def episodes():
 
 @app.post("/director/trigger")
 async def director_trigger(body: DirectorTrigger) -> dict[str, Any]:
-    event = body.event or "an aftershock shakes the building, part of the ceiling collapses ahead"
+    event = body.event or ("A sudden aftershock shakes the corridor: ceiling panels crash down ahead and a "
+                           "thick cloud of grey dust rolls toward the camera")
     for eid in body.episode_ids:
         ep = _require(eid)
         ep.record("director", event=event)
+        ep.events.append((time.time(), event))
         await broadcast_to_episode(eid, DirectorEvent(
             episode_id=eid, kind="director",
-            world_prompt=f"{ep.scenario.world_prompt}, {event}",
-            caption=event.split(",")[0].upper()))
+            world_prompt=f"{ep.scenario.world_prompt} {event}", clause=event,
+            caption=event.split(":")[0].upper()))
     return {"ok": True, "event": event}
 
 

@@ -77,7 +77,7 @@ export default function MissionControl() {
     return client.subscribe((msg) => {
       if (msg.type === "decision") handleDecision(msg);
       else if (msg.type === "director_event" && msg.episode_id === episodeRef.current) {
-        void world.current?.setPrompt(msg.world_prompt);
+        void world.current?.addEvent(msg.clause ?? msg.world_prompt);
         setBanner(msg.caption);
         setTimeout(() => setBanner(null), 4000);
       } else if (msg.type === "error") setError(msg.message);

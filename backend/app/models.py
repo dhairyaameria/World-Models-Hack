@@ -229,7 +229,8 @@ class DirectorEvent(BaseModel):
     type: Literal["director_event"] = "director_event"
     episode_id: str
     kind: Literal["director", "trap", "reveal"] = "director"
-    world_prompt: str
+    world_prompt: str  # full prompt (base + clause), for clients that don't compose layers
+    clause: Optional[str] = None  # event sentence to append on top of the base prompt
     caption: str
     source_id: Optional[str] = None
 

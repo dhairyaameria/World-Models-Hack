@@ -77,7 +77,7 @@ export interface Decision {
 export type ServerMessage =
   | { type: "episode_started"; episode_id: string; scenario: Scenario }
   | Decision
-  | { type: "director_event"; episode_id: string; kind: "director" | "trap" | "reveal"; world_prompt: string; caption: string; source_id?: string | null }
+  | { type: "director_event"; episode_id: string; kind: "director" | "trap" | "reveal"; world_prompt: string; clause?: string; caption: string; source_id?: string | null }
   | { type: "episode_summary"; episode_id: string; score: number; outcome: Outcome; lessons: string[] }
   | { type: "audio_state"; episode_id: string; ts: number; pose: Pose; sources: unknown[] }
   | { type: "imagine_request"; episode_id: string; request_id: string; options: unknown[] }

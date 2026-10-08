@@ -9,7 +9,9 @@ An autonomous disaster-rescue agent that sees and hears, running inside a real-t
 | P0 tests | Done; see [docs/PHASE0_RESULTS.md](docs/PHASE0_RESULTS.md) |
 | P1 backend skeleton + mock agent | Done (tests pass) |
 | P2 frontend skeleton + Reactor client | Done; full loop verified in the browser with both the Static world and a real Reactor session (mock agent) |
-| P3 onwards | Not started |
+| P3 live ER 2 agent + safety layer | Done: drives a real Reactor world on its own (~2 s/decision); safety rules unit-tested. Example frames in the prompt (few-shot) are still to do |
+| P16/P17 hearing | Next |
+| Others | Not started |
 
 ## Setup
 
@@ -33,7 +35,7 @@ Run the tests with `cd backend && .venv/bin/python -m pytest -q`.
 
 ## Running without keys
 
-- `AGENT_MODE=mock` (the default) returns random but plausible decisions.
+- `AGENT_MODE=mock` (the default) returns random but plausible decisions. Set `AGENT_MODE=live` in `backend/.env` for the real ER 2 agent.
 - **World: Static** in the UI pans over the scenario's reference image instead of streaming Reactor. It's free.
 
 ## With keys: Phase 0

@@ -44,4 +44,11 @@ The trap was smoke under the left door, with a clear stairwell on the right. **5
 
 ## Quotas
 
-The free tier allows **3 requests/min for TTS**. `with_quota_retry` waits out the limit for asset generation. Six ER 2 calls in a row went through, but the 2-fps agent loop and data collection (P12) will need a **paid tier** on the AI Studio project.
+Asset generation first hit the free tier's limit of **3 TTS requests/min**, and `with_quota_retry` waited it out. The project is now on **Tier 3** (confirmed with a burst of 5 TTS calls in 12 s). Its limits are ER 2 at 20K RPM, TTS at 1K RPM and images at 5K RPM, so quota isn't a constraint for the agent loop or data collection.
+
+## P3 follow-up: live runs in Reactor
+
+- **Thinking off** (`thinking_budget=0`) cut the median from 4.1 s to **1.8 s**, with the same decisions and hazards. In the live loop the median is **2.2 s**.
+- **Drift:** layered prompts from Reactor's prompt guide (`frontend/lib/prompts.ts`) keep the robot's chassis and treads in frame and the scene more stable, but over about a minute the world still drifts. That's a limit of the model, not of our prompts, so keep demo runs short (under about 60 s per scenario) or restart the session.
+- **World events:** the agent now gets an "ALERT" line in its context for 20 s after a disaster event, and it treats dense dust or smoke that hides the floor as a severity-2 hazard. Before this change, it drove straight into the dust cloud from an aftershock.
+- **Forward moves are capped at 1.5 s.** At 2.5 s the robot acted on stale frames and walked into a wall.

@@ -11,9 +11,12 @@ PRESETS: list[Scenario] = [
         description="Third floor of an office after a strong earthquake. Dust, fallen ceiling "
         "tiles, overturned desks. A green exit sign glows at the far end of the corridor.",
         world_prompt=(
-            "first-person view walking through a dim office corridor after an earthquake, "
-            "fallen ceiling tiles and overturned desks, dust in the air, flickering lights, "
-            "a green emergency exit sign far down the corridor, realistic, handheld camera"
+            "A dim office corridor on the third floor after a strong earthquake. The world contains "
+            "EXACTLY ONE green glowing emergency exit sign at the far end of the corridor at a fixed "
+            "position AND EXACTLY ONE overturned grey metal desk on the right at a fixed position AND "
+            "EXACTLY ONE cracked fluorescent ceiling light overhead at a fixed position. Fallen ceiling "
+            "tiles, hanging cables, scattered papers and grey dust cover the floor; cracked plaster walls. "
+            "Gritty, realistic, cold flickering light."
         ),
         reference_image_url="/static/scenarios/earthquake_office.jpg",
         audio_sources=[
@@ -48,9 +51,11 @@ PRESETS: list[Scenario] = [
         description="Street-level flooding after a storm. Murky water, floating debris, "
         "downed power lines. A raised pedestrian bridge leads to safety.",
         world_prompt=(
-            "first-person view on a flooded city street after a storm, knee-deep murky brown "
-            "water, floating debris, a downed power line sparking near a lamp post, abandoned "
-            "cars, a raised pedestrian bridge with a green exit sign in the distance, overcast"
+            "A downtown street flooded after a storm, knee-deep murky brown water. The world contains "
+            "EXACTLY ONE leaning lamp post on the right with a sparking downed power line at a fixed "
+            "position AND EXACTLY ONE half-submerged white car on the left at a fixed position AND "
+            "EXACTLY ONE raised pedestrian bridge with a green exit sign far ahead at a fixed position. "
+            "Floating debris, shuttered shops, heavy overcast sky. Gritty, realistic."
         ),
         reference_image_url="/static/scenarios/flooded_street.jpg",
         audio_sources=[
@@ -83,9 +88,11 @@ PRESETS: list[Scenario] = [
         description="Smoke-filled warehouse with a fire spreading in the back aisles. "
         "Tall shelving, a forklift, and an exit door on the left wall.",
         world_prompt=(
-            "first-person view inside a large warehouse filled with grey smoke, tall metal "
-            "shelving aisles, orange fire glow at the back, a forklift, a green exit sign "
-            "above a door on the left wall, realistic"
+            "A large warehouse filling with grey smoke. The world contains EXACTLY ONE orange fire "
+            "burning in the back aisle straight ahead at a fixed position AND EXACTLY ONE yellow forklift "
+            "on the right at a fixed position AND EXACTLY ONE door with a green exit sign above it on the "
+            "left wall at a fixed position. Tall metal shelving aisles, stacked cardboard boxes, haze "
+            "glowing orange. Gritty, realistic."
         ),
         reference_image_url="/static/scenarios/warehouse_fire.jpg",
         audio_sources=[

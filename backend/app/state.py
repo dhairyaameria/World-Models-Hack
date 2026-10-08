@@ -11,11 +11,13 @@ import math
 import os
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 from .models import Action, AgentName, Mode, Pose, Scenario
+from .safety import SafetyLayer
 
 # Calibrate these against Reactor (P3): how far one second of W moves, how fast "look" turns.
 SPEED_MPS = float(os.getenv("SPEED_MPS", "1.0"))
@@ -62,6 +64,12 @@ class Episode:
     steps: int = 0
     outcome: Optional[str] = None
     log: list[dict[str, Any]] = field(default_factory=list)
+    # mission memory for the live agent
+    safety: SafetyLayer = field(default_factory=SafetyLayer)
+    recent: deque = field(default_factory=lambda: deque(maxlen=5))
+    survivors_found: list[str] = field(default_factory=list)
+    playbook: list[str] = field(default_factory=list)
+    events: list[tuple[float, str]] = field(default_factory=list)  # (time, clause) of world events
 
     def apply(self, action: Action) -> None:
         self.pose = integrate(self.pose, action)

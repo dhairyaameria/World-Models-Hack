@@ -5,12 +5,14 @@
 
 import { LingbotWorld2Model } from "@reactor-models/lingbot-world-2";
 import type { Action } from "./contract";
+import { composePrompt } from "./prompts";
 
 export interface World {
   start(referenceImageUrl: string, prompt: string): Promise<void>;
   /** Apply an action for action.duration_ms, then go idle. A newer action replaces it. */
   sendAction(action: Action): void;
-  setPrompt(prompt: string): Promise<void>;
+  /** Add a scene event clause (director event, trap, reveal) on top of the base prompt. */
+  addEvent(clause: string): Promise<void>;
   /** Current frame as base64 JPEG (no data: prefix), or null if no frame yet. */
   captureFrame(maxWidth?: number, quality?: number): string | null;
   stop(): Promise<void>;
@@ -52,6 +54,9 @@ export class ReactorWorld implements World {
   onStatus?: (status: string) => void;
   private model: LingbotWorld2Model | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private base = "";
+  private events: string[] = [];
+  private moving = false;
 
   /** Degrees per generated frame while looking (Reactor range 0-30). */
   constructor(private rotationSpeedDeg = 3) {
@@ -75,7 +80,10 @@ export class ReactorWorld implements World {
     const blob = await (await fetch(referenceImageUrl)).blob();
     const ref = await model.uploadFile(blob, { name: "reference.jpg" });
     await model.setImage({ image: ref });
-    await model.setPrompt({ prompt });
+    this.base = prompt;
+    this.events = [];
+    this.moving = false;
+    await model.setPrompt({ prompt: composePrompt(this.base, false) });
     await model.setRotationSpeedDeg({ rotation_speed_deg: this.rotationSpeedDeg });
     await model.start();
   }
@@ -84,6 +92,7 @@ export class ReactorWorld implements World {
     const m = this.model;
     if (!m) return;
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.setMoving(action.move !== "none");
     void m.setMoveLongitudinal({ move_longitudinal: action.move === "W" ? "forward" : action.move === "S" ? "back" : "idle" });
     void m.setMoveLateral({ move_lateral: action.move === "A" ? "strafe_left" : action.move === "D" ? "strafe_right" : "idle" });
     void m.setLookHorizontal({ look_horizontal: action.look === "left" || action.look === "right" ? action.look : "idle" });
@@ -98,10 +107,18 @@ export class ReactorWorld implements World {
     void m.setMoveLateral({ move_lateral: "idle" });
     void m.setLookHorizontal({ look_horizontal: "idle" });
     void m.setLookVertical({ look_vertical: "idle" });
+    this.setMoving(false);
   }
 
-  async setPrompt(prompt: string) {
-    await this.model?.setPrompt({ prompt });
+  private setMoving(moving: boolean) {
+    if (moving === this.moving) return;
+    this.moving = moving;
+    void this.model?.setPrompt({ prompt: composePrompt(this.base, moving, this.events) });
+  }
+
+  async addEvent(clause: string) {
+    this.events = [...this.events.slice(-1), clause]; // keep at most 2 events (length budget)
+    await this.model?.setPrompt({ prompt: composePrompt(this.base, this.moving, this.events) });
   }
 
   captureFrame(maxWidth = 640, quality = 0.8) {
@@ -171,8 +188,8 @@ export class StaticWorld implements World {
     this.idleAt = performance.now() + action.duration_ms;
   }
 
-  async setPrompt(prompt: string) {
-    this.caption = prompt;
+  async addEvent(clause: string) {
+    this.caption = clause;
   }
 
   private draw() {
