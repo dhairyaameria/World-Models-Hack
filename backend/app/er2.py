@@ -12,7 +12,7 @@ import re
 import time
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .genai_client import ER2_MODEL, ER2_STREAMING_MODEL, client
 
@@ -38,7 +38,12 @@ class PointOut(BaseModel):
 
 
 class HazardOut(PointOut):
-    severity: Literal[1, 2, 3]
+    severity: int = Field(description="1 = minor, 2 = serious, 3 = deadly")
+
+    @field_validator("severity")
+    @classmethod
+    def _clamp(cls, v: int) -> int:
+        return min(3, max(1, v))
 
 
 class HeardOut(BaseModel):
@@ -47,7 +52,12 @@ class HeardOut(BaseModel):
     label: str
     is_hazard: bool
     is_decoy_suspected: bool
-    urgency: Literal[1, 2, 3]
+    urgency: int = Field(description="1 = low, 2 = medium, 3 = critical")
+
+    @field_validator("urgency")
+    @classmethod
+    def _clamp(cls, v: int) -> int:
+        return min(3, max(1, v))
 
 
 class ActionOut(BaseModel):
@@ -87,7 +97,11 @@ def build_user_text(context: str = "", mic_array: Optional[str] = None) -> str:
 
 def decide_sync(jpeg: bytes, context: str = "", audio_wav: Optional[bytes] = None,
                 mic_array: Optional[str] = None, model: str = ER2_MODEL) -> tuple[DecisionOut, float]:
-    """Standard (non-streaming) endpoint with enforced JSON schema. Returns (decision, latency_ms)."""
+    """Standard (non-streaming) endpoint with enforced JSON schema. Returns (decision, latency_ms).
+
+    This is the endpoint the agent loop uses: in P0-A it was ~0.5 s slower than the streaming
+    endpoint but its decisions were correct in all 3 scenes, while the streaming endpoint (frame
+    sent as realtime video input) misread scenes and walked toward fire."""
     from google.genai import types
 
     contents: list = [types.Part.from_bytes(data=jpeg, mime_type="image/jpeg")]
@@ -131,9 +145,13 @@ async def decide_streaming(jpeg: bytes, context: str = "",
         await session.send_realtime_input(text=build_user_text(context))
         text = ""
         async for msg in session.receive():
+            sc = msg.server_content
             if msg.text:
                 text += msg.text
-            if msg.server_content and msg.server_content.turn_complete:
+            # this endpoint delivers its text reply as output_transcription
+            elif sc and sc.output_transcription and sc.output_transcription.text:
+                text += sc.output_transcription.text
+            if sc and sc.turn_complete:
                 break
         latency = (time.perf_counter() - t0) * 1000
     m = _JSON_RE.search(text)

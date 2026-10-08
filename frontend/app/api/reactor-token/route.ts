@@ -29,5 +29,5 @@ export async function POST() {
     return Response.json({ error: `Reactor token request failed (${res.status})`, detail }, { status: 502 });
   }
   const { jwt, expires_at } = await res.json();
-  return Response.json({ jwt, expires_at });
+  return Response.json({ jwt, expires_at }, { headers: { "Cache-Control": "private, no-store" } });
 }

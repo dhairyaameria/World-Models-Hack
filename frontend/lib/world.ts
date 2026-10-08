@@ -28,11 +28,23 @@ function frameToJpeg(source: CanvasImageSource, w: number, h: number, maxWidth: 
   return c.toDataURL("image/jpeg", quality).split(",")[1] ?? null;
 }
 
+// The SDK calls the resolver on every request, and a session can only be operated by the exact
+// token that created it, so memoize one token per page and re-mint only near expiry.
+let cachedToken: { jwt: string; expiresAt: number } | null = null;
+let pendingToken: Promise<string> | null = null;
+
 async function fetchReactorJwt(): Promise<string> {
-  const res = await fetch("/api/reactor-token", { method: "POST" });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error ?? "could not get Reactor token");
-  return body.jwt;
+  if (cachedToken && cachedToken.expiresAt - Date.now() / 1000 > 300) return cachedToken.jwt;
+  pendingToken ??= (async () => {
+    const res = await fetch("/api/reactor-token", { method: "POST" });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? "could not get Reactor token");
+    cachedToken = { jwt: body.jwt, expiresAt: body.expires_at };
+    return body.jwt as string;
+  })().finally(() => {
+    pendingToken = null;
+  });
+  return pendingToken;
 }
 
 export class ReactorWorld implements World {

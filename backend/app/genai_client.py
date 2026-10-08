@@ -16,8 +16,8 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 ER2_MODEL = os.getenv("ER2_MODEL", "gemini-robotics-er-2-preview")
 ER2_STREAMING_MODEL = os.getenv("ER2_STREAMING_MODEL", "gemini-robotics-er-2-streaming-preview")
 FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-flash-latest")
-IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
-TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
+TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
 
 
 @lru_cache(maxsize=1)
@@ -27,6 +27,25 @@ def client():
     if not os.getenv("GEMINI_API_KEY"):
         raise SystemExit("GEMINI_API_KEY is not set. Put it in backend/.env (see .env.example).")
     return genai.Client()
+
+
+def with_quota_retry(fn, *args, attempts: int = 6, **kwargs):
+    """Call fn, sleeping through 429 RESOURCE_EXHAUSTED using the server's suggested delay."""
+    import re
+    import time
+
+    from google.genai import errors
+
+    for i in range(attempts):
+        try:
+            return fn(*args, **kwargs)
+        except errors.ClientError as e:
+            if e.code != 429 or i == attempts - 1:
+                raise
+            m = re.search(r"retry in ([\d.]+)s", str(e))
+            delay = float(m.group(1)) + 1 if m else 20.0
+            print(f"  quota hit, waiting {delay:.0f}s ...", flush=True)
+            time.sleep(delay)
 
 
 def pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
@@ -43,7 +62,8 @@ def tts(text: str, style: str, voice: str = "Kore") -> bytes:
     """Speak `text` in `style` (e.g. 'a weak, exhausted whisper'). Returns WAV bytes."""
     from google.genai import types
 
-    resp = client().models.generate_content(
+    resp = with_quota_retry(
+        client().models.generate_content,
         model=TTS_MODEL,
         contents=f"Say this as {style}: {text}",
         config=types.GenerateContentConfig(
@@ -65,7 +85,8 @@ def generate_image(prompt: str) -> bytes:
     """Returns image bytes (PNG/JPEG as produced by the model)."""
     from google.genai import types
 
-    resp = client().models.generate_content(
+    resp = with_quota_retry(
+        client().models.generate_content,
         model=IMAGE_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(

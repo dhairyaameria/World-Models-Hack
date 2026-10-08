@@ -6,9 +6,9 @@ An autonomous disaster-rescue agent that sees and hears, running inside a real-t
 
 | Phase | State |
 |---|---|
-| P0 tests | Scripts ready (`backend/spikes/`); need API keys to run |
+| P0 tests | Done; see [docs/PHASE0_RESULTS.md](docs/PHASE0_RESULTS.md) |
 | P1 backend skeleton + mock agent | Done (tests pass) |
-| P2 frontend skeleton + Reactor client | Done; full loop verified in the browser with the free Static world + mock agent. Reactor path written against SDK types, not yet run with a key |
+| P2 frontend skeleton + Reactor client | Done; full loop verified in the browser with both the Static world and a real Reactor session (mock agent) |
 | P3 onwards | Not started |
 
 ## Setup
