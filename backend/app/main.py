@@ -159,7 +159,7 @@ class Connection:
                     await self.send(DirectorEvent(
                         episode_id=ep.id, kind="reveal", source_id=src.id, clause=src.reveal.world_prompt,
                         world_prompt=f"{ep.scenario.world_prompt} {src.reveal.world_prompt}",
-                        caption=f"SURVIVOR LOCATED BY SOUND: {src.reveal.caption}"))
+                        caption=f"Located by sound: {src.reveal.caption}"))
             except Exception:
                 log.exception("audio tick failed for %s", ep.id)
                 return
@@ -309,7 +309,7 @@ async def director_trigger(body: DirectorTrigger) -> dict[str, Any]:
         await broadcast_to_episode(eid, DirectorEvent(
             episode_id=eid, kind="director",
             world_prompt=f"{ep.scenario.world_prompt} {event}", clause=event,
-            caption=event.split(":")[0].upper()))
+            caption=event.split(":")[0].strip().rstrip(".")))
     return {"ok": True, "event": event}
 
 

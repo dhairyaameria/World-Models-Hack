@@ -27,10 +27,10 @@ interface Detail extends EpisodeSummary {
 
 // Status palette (reserved for state) - always paired with an icon + label, never color alone.
 const OUTCOME: Record<string, { icon: string; label: string; cls: string }> = {
-  rescued: { icon: "✓", label: "Rescued", cls: "bg-green-900/60 text-green-300" },
-  escaped: { icon: "✓", label: "Escaped", cls: "bg-green-900/60 text-green-300" },
-  timeout: { icon: "⏱", label: "No rescue", cls: "bg-slate-800 text-slate-300" },
-  failed: { icon: "✗", label: "Failed", cls: "bg-red-900/60 text-red-300" },
+  rescued: { icon: "✓", label: "Rescued", cls: "bg-survivor-tint text-survivor" },
+  escaped: { icon: "✓", label: "Escaped", cls: "bg-survivor-tint text-survivor" },
+  timeout: { icon: "⏱", label: "No rescue", cls: "bg-canvas text-muted" },
+  failed: { icon: "✗", label: "Failed", cls: "bg-hazard-tint text-hazard" },
 };
 
 const SOUND_ICON: Record<string, string> = {
@@ -55,14 +55,14 @@ function ScoreChart({ eps, selected, onSelect }: { eps: EpisodeSummary[]; select
   return (
     <div className="viz-root relative">
       <div className="mb-1 flex items-baseline justify-between">
-        <div className="text-sm font-semibold text-slate-100">Score per episode</div>
-        <div className="text-[11px] text-slate-400">oldest → newest · 0–100</div>
+        <div className="text-sm font-medium text-ink">Score per episode</div>
+        <div className="font-mono text-[11px] text-muted">oldest → newest · 0–100</div>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" onMouseLeave={() => setHover(null)}>
         {[0, 50, 100].map((v) => (
           <g key={v}>
-            <line x1={PAD_L} x2={W - 6} y1={y(v)} y2={y(v)} stroke="#334155" strokeWidth={1} strokeDasharray={v === 0 ? undefined : "2 4"} />
-            <text x={PAD_L - 6} y={y(v) + 3} textAnchor="end" fontSize="10" fill="#94a3b8">{v}</text>
+            <line x1={PAD_L} x2={W - 6} y1={y(v)} y2={y(v)} stroke="var(--line)" strokeWidth={1} strokeDasharray={v === 0 ? undefined : "2 4"} />
+            <text x={PAD_L - 6} y={y(v) + 3} textAnchor="end" fontSize="10" fill="var(--muted)" fontFamily="var(--font-mono)">{v}</text>
           </g>
         ))}
         {eps.map((e, i) => {
@@ -77,23 +77,23 @@ function ScoreChart({ eps, selected, onSelect }: { eps: EpisodeSummary[]; select
               <rect x={PAD_L + i * slot} y={PAD_T} width={slot} height={plotH} fill="transparent" />
               <path
                 d={`M${x},${y(0)} V${top + r} Q${x},${top} ${x + r},${top} H${x + barW - r} Q${x + barW},${top} ${x + barW},${top + r} V${y(0)} Z`}
-                fill="#3987e5" opacity={active ? 1 : hover !== null ? 0.45 : 0.85} />
+                fill="var(--chart)" opacity={active ? 1 : hover !== null ? 0.45 : 0.85} />
             </g>
           );
         })}
         {n > 0 && (
-          <text x={PAD_L + (n - 1) * slot + slot / 2} y={y(eps[n - 1].score) - 4} textAnchor="middle" fontSize="10" fill="#e2e8f0">
+          <text x={PAD_L + (n - 1) * slot + slot / 2} y={y(eps[n - 1].score) - 4} textAnchor="middle" fontSize="10" fill="var(--ink)" fontFamily="var(--font-mono)">
             {eps[n - 1].score}
           </text>
         )}
       </svg>
       {h && hover !== null && (
-        <div className="pointer-events-none absolute top-6 z-10 w-56 rounded border border-slate-600 bg-slate-900 p-2 text-xs shadow-lg"
+        <div className="pointer-events-none absolute top-6 z-10 w-56 rounded-xl border border-line bg-surface p-2.5 text-xs"
           style={{ left: `${Math.min(55, ((PAD_L + hover * slot) / W) * 100)}%` }}>
-          <div className="font-semibold text-slate-100">{h.scenario_title}</div>
-          <div className="text-slate-400">{fmtTime(h.started_at)} · {h.duration_s.toFixed(0)} s</div>
-          <div className="mt-1 text-slate-200">Score {h.score} · {OUTCOME[h.outcome ?? "timeout"]?.label ?? h.outcome}</div>
-          {h.time_to_first_survivor_s !== null && <div className="text-slate-300">First survivor at {h.time_to_first_survivor_s.toFixed(0)} s</div>}
+          <div className="font-medium text-ink">{h.scenario_title}</div>
+          <div className="font-mono text-muted">{fmtTime(h.started_at)} · {h.duration_s.toFixed(0)} s</div>
+          <div className="mt-1 text-ink">Score <span className="font-mono">{h.score}</span> · {OUTCOME[h.outcome ?? "timeout"]?.label ?? h.outcome}</div>
+          {h.time_to_first_survivor_s !== null && <div className="text-muted">First survivor at {h.time_to_first_survivor_s.toFixed(0)} s</div>}
         </div>
       )}
     </div>
@@ -138,11 +138,11 @@ export function EpisodesPanel({ refreshKey, scenarioId }: { refreshKey: number; 
   const rescued = shown.filter((e) => e.outcome === "rescued" || e.outcome === "escaped").length;
   const best = shown.reduce<EpisodeSummary | null>((b, e) => (!b || e.score > b.score ? e : b), null);
 
-  if (error) return <p className="text-red-400">{error}</p>;
+  if (error) return <p className="text-hazard">{error}</p>;
 
   const filters = (
-    <div className="flex items-center gap-3 text-xs text-slate-400">
-      <select className="rounded bg-slate-800 px-2 py-1 text-slate-100" value={filter} onChange={(e) => setFilter(e.target.value)}>
+    <div className="flex items-center gap-3 text-xs text-muted">
+      <select className="rounded-full border border-line bg-surface px-3 py-1 text-ink" value={filter} onChange={(e) => setFilter(e.target.value)}>
         <option value="all">All scenarios</option>
         {scenarioOptions.map(([id, title]) => <option key={id} value={id}>{title}</option>)}
       </select>
@@ -153,7 +153,7 @@ export function EpisodesPanel({ refreshKey, scenarioId }: { refreshKey: number; 
     </div>
   );
   if (!shown.length) {
-    return <div className="space-y-3">{filters}<p className="text-slate-500">No episodes yet for this filter. Run one and press Stop to save it.</p></div>;
+    return <div className="space-y-3">{filters}<p className="text-muted">No episodes yet for this filter. Run one and press Stop to save it.</p></div>;
   }
 
   return (
@@ -161,15 +161,15 @@ export function EpisodesPanel({ refreshKey, scenarioId }: { refreshKey: number; 
       {filters}
       <div className="grid grid-cols-3 gap-2">
         {[["Episodes", String(shown.length)], ["Rescues", `${rescued}/${shown.length}`], ["Best score", best ? String(best.score) : "–"]].map(([k, v]) => (
-          <div key={k} className="rounded bg-slate-900 px-2 py-1.5">
-            <div className="text-[11px] uppercase tracking-wide text-slate-400">{k}</div>
-            <div className="text-xl font-semibold text-slate-100">{v}</div>
+          <div key={k} className="rounded-2xl border border-line bg-surface px-3 py-2">
+            <div className="text-xs text-muted">{k}</div>
+            <div className="font-mono text-2xl text-ink">{v}</div>
           </div>
         ))}
       </div>
 
       <ScoreChart eps={shown} selected={selected} onSelect={setSelected} />
-      <div className="text-[11px] text-slate-500" title={rubric}>Rule-based score: {rubric}</div>
+      <div className="text-[11px] leading-relaxed text-muted" title={rubric}>Rule-based score: {rubric}</div>
 
 
       <div className="space-y-1">
@@ -177,17 +177,17 @@ export function EpisodesPanel({ refreshKey, scenarioId }: { refreshKey: number; 
           const o = OUTCOME[e.outcome ?? "timeout"] ?? OUTCOME.timeout;
           const open = selected === e.episode_id;
           return (
-            <div key={e.episode_id} className={`rounded ${open ? "bg-slate-800" : "bg-slate-900"}`}>
-              <button className="flex w-full items-center gap-2 px-2 py-1.5 text-left" onClick={() => setSelected(open ? null : e.episode_id)}>
-                <span className="w-12 font-mono text-xs text-slate-400">{fmtTime(e.started_at)}</span>
-                <span className="flex-1 truncate text-slate-100">{e.scenario_title}</span>
+            <div key={e.episode_id} className={`rounded-xl border ${open ? "border-primary/40 bg-tint" : "border-line bg-surface"}`}>
+              <button className="flex w-full items-center gap-2 px-3 py-2 text-left" onClick={() => setSelected(open ? null : e.episode_id)}>
+                <span className="w-12 font-mono text-xs text-muted">{fmtTime(e.started_at)}</span>
+                <span className="flex-1 truncate text-ink">{e.scenario_title}</span>
                 <span className="text-sm" title="sounds remembered">{e.sounds_heard.map((s) => SOUND_ICON[s.type] ?? "🔊").join("")}</span>
-                <span className={`rounded px-1.5 text-xs ${o.cls}`}>{o.icon} {o.label}</span>
-                <span className="w-8 text-right font-mono text-slate-100">{e.score}</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs ${o.cls}`}>{o.icon} {o.label}</span>
+                <span className="w-8 text-right font-mono text-ink">{e.score}</span>
               </button>
               {open && detail?.episode_id === e.episode_id && (
-                <div className="border-t border-slate-700 px-2 py-2 text-xs">
-                  <div className="mb-2 grid grid-cols-2 gap-x-3 gap-y-0.5 text-slate-300">
+                <div className="border-t border-line px-3 py-2 text-xs">
+                  <div className="mb-2 grid grid-cols-2 gap-x-3 gap-y-0.5 text-ink">
                     <div>Duration: {detail.duration_s.toFixed(0)} s</div>
                     <div>Steps: {detail.steps}</div>
                     <div>First survivor: {detail.time_to_first_survivor_s !== null ? `${detail.time_to_first_survivor_s.toFixed(0)} s` : "–"}</div>
@@ -195,10 +195,10 @@ export function EpisodesPanel({ refreshKey, scenarioId }: { refreshKey: number; 
                     <div>Hearing: {detail.hearing ? "on" : "off"} · Imagination: {detail.imagination ? "on" : "off"}</div>
                     <div>Imagined choice: {detail.imagination_choice ?? "–"}</div>
                   </div>
-                  <ol className="space-y-0.5 border-l border-slate-600 pl-2">
+                  <ol className="space-y-0.5 border-l border-line pl-2">
                     {detail.timeline.map((t, i) => (
-                      <li key={i} className={t.kind === "reveal" ? "text-green-300" : t.kind === "imagine_verdict" ? "text-sky-300" : "text-slate-300"}>
-                        <span className="mr-1 font-mono text-slate-500">{t.t.toFixed(0).padStart(3, " ")}s</span>{t.text}
+                      <li key={i} className={t.kind === "reveal" ? "text-survivor" : t.kind === "imagine_verdict" ? "text-primary-text" : "text-ink"}>
+                        <span className="mr-1 font-mono text-muted">{t.t.toFixed(0).padStart(3, " ")}s</span>{t.text}
                       </li>
                     ))}
                   </ol>

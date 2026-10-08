@@ -19,77 +19,73 @@ export interface ImaginationView {
 }
 
 const STATUS_TEXT: Record<ForkStatus, string> = {
-  starting: "forking world from current frame…",
-  simulating: "simulating maneuver…",
-  done: "outcome captured",
-  failed: "simulation failed",
+  starting: "Forking the world from the current view…",
+  simulating: "Simulating the maneuver…",
+  done: "Outcome captured",
+  failed: "Simulation failed",
 };
 
-function Bar({ value, color }: { value: number; color: string }) {
-  return (
-    <div className="h-2 w-full rounded bg-slate-700">
-      <div className={`h-2 rounded ${color}`} style={{ width: `${Math.max(0, Math.min(10, value)) * 10}%` }} />
-    </div>
-  );
-}
-
-/** Full-screen "IMAGINING" moment: one live tile per imagined future, then scores + the choice. */
+/** The imagination moment: three rounded cards, one per imagined future, then scores and the choice. */
 export function ImaginationOverlay({ view }: { view: ImaginationView }) {
   const v = view.verdict;
   return (
-    <div className="absolute inset-0 z-10 flex flex-col bg-slate-950/85 p-4">
-      <div className="mb-3 text-center">
-        <div className="text-2xl font-bold tracking-widest text-sky-300">
-          {v ? "IMAGINED FUTURES · DECISION" : "IMAGINING POSSIBLE FUTURES…"}
-        </div>
-        <div className="text-sm text-slate-400">
-          {v ? v.reason : "The world model is forked from the robot's current view; each fork runs one maneuver."}
+    <div className="absolute inset-0 z-10 flex flex-col bg-canvas/[0.97] p-5">
+      <div className="mb-4 flex items-start gap-3">
+        <svg width="28" height="28" viewBox="0 0 28 28" className="mt-0.5 shrink-0">
+          {[13, 9, 5].map((r) => <circle key={r} cx="14" cy="14" r={r} fill="none" stroke="var(--primary-text)" strokeWidth="1" opacity={r === 5 ? 1 : 0.5} />)}
+        </svg>
+        <div>
+          <div className="text-lg font-medium text-ink">{v ? "Imagined futures: decision" : "Imagining possible futures"}</div>
+          <div className="text-sm text-muted">
+            {v ? v.reason : "The world model is forked from the robot's current view; each fork runs one maneuver."}
+          </div>
         </div>
       </div>
-      <div className="grid flex-1 grid-cols-3 gap-3">
+      <div className="grid flex-1 grid-cols-3 gap-4">
         {view.options.map((o) => {
           const s = v?.scores.find((x) => x.id === o.id);
           const chosen = v?.chosen_id === o.id;
+          const frames = view.frames?.[o.id] ?? [];
+          const done = view.status[o.id] === "done" || view.status[o.id] === "failed" || !!v;
           return (
             <div key={o.id}
-              className={`flex flex-col overflow-hidden rounded-lg border-2 ${chosen ? "border-green-400" : v ? "border-slate-700 opacity-60" : "border-sky-700"}`}>
-              <div className="flex items-center justify-between bg-slate-900 px-2 py-1 text-sm font-semibold">
-                <span>{o.label}</span>
-                {chosen && <span className="rounded bg-green-500 px-2 text-xs text-black">CHOSEN</span>}
-                {v && !chosen && <span className="text-red-400">✗</span>}
+              className={`flex flex-col overflow-hidden rounded-2xl bg-surface ${
+                chosen ? "border-2 border-primary" : "border border-line"} ${v && !chosen ? "opacity-70" : ""}`}>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-sm font-medium text-ink">{o.label}</span>
+                {chosen && <span className="rounded-full bg-primary px-2.5 py-0.5 text-xs font-medium text-on-primary">Chosen</span>}
               </div>
-              {(() => {
-                const frames = view.frames?.[o.id] ?? [];
-                const done = view.status[o.id] === "done" || view.status[o.id] === "failed" || !!v;
-                if (done && frames.length) {
-                  return (
-                    <div className="bg-black">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img alt="imagined outcome" className="aspect-video w-full object-cover" src={`data:image/jpeg;base64,${frames[frames.length - 1]}`} />
-                      <div className="flex gap-1 p-1">
-                        {frames.map((f, i) => (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img key={i} alt={`step ${i + 1}`} className="h-10 flex-1 rounded object-cover opacity-80" src={`data:image/jpeg;base64,${f}`} />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                }
-                return (
-                  <div className="relative aspect-video bg-black"
+              <div className="mx-3 overflow-hidden rounded-xl bg-frame">
+                {done && frames.length ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img alt="imagined outcome" className="aspect-video w-full object-cover" src={`data:image/jpeg;base64,${frames[frames.length - 1]}`} />
+                ) : (
+                  <div className="relative aspect-video"
                     ref={(el) => {
                       const tile = view.tiles[o.id];
                       if (el && tile && el.firstChild !== tile) el.replaceChildren(tile);
                     }} />
-                );
-              })()}
-              <div className="flex-1 space-y-1 bg-slate-900 p-2 text-xs">
-                {!s && <div className="text-slate-400">{STATUS_TEXT[view.status[o.id] ?? "starting"]}</div>}
+                )}
+              </div>
+              {done && frames.length > 1 && (
+                <div className="mx-3 mt-1.5 flex gap-1">
+                  {frames.map((f, i) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={i} alt={`step ${i + 1}`} className="h-9 flex-1 rounded-md object-cover" src={`data:image/jpeg;base64,${f}`} />
+                  ))}
+                </div>
+              )}
+              <div className="flex-1 px-3 py-2.5 text-xs">
+                {!s && <div className="text-muted">{STATUS_TEXT[view.status[o.id] ?? "starting"]}</div>}
                 {s && (
                   <>
-                    <div className="flex items-center gap-2"><span className="w-16 text-green-300">progress</span><Bar value={s.progress} color="bg-green-500" /><span>{s.progress.toFixed(0)}</span></div>
-                    <div className="flex items-center gap-2"><span className="w-16 text-red-300">risk</span><Bar value={s.risk} color="bg-red-500" /><span>{s.risk.toFixed(0)}</span></div>
-                    <div className="pt-1 text-slate-300">{s.summary}</div>
+                    <div className="mb-1.5 flex gap-1.5">
+                      <span className="rounded-full bg-tint px-2 py-0.5 font-mono text-primary-text">progress {s.progress.toFixed(0)}</span>
+                      <span className={`rounded-full px-2 py-0.5 font-mono ${s.risk >= 5 ? "bg-hazard-tint text-hazard" : "bg-canvas text-muted"}`}>
+                        risk {s.risk.toFixed(0)}
+                      </span>
+                    </div>
+                    <div className="leading-relaxed text-ink">{s.summary}</div>
                   </>
                 )}
               </div>
