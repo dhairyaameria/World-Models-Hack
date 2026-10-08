@@ -89,7 +89,19 @@ export class ReactorWorld implements World {
     });
     model.onCommandError((e) => console.warn("[reactor] command_error", e));
 
-    await model.connect(fetchReactorJwt);
+    // Reactor answers 429 when it has no free GPU capacity; that is usually brief, so retry.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await model.connect(fetchReactorJwt);
+        if (model.getStatus() !== "disconnected") break;
+        throw model.getLastError() ?? new Error("connect failed");
+      } catch (e) {
+        const msg = String((e as Error)?.message ?? e);
+        if (!/429|capacity/i.test(msg) || attempt >= 12) throw e;
+        this.onStatus?.(`no Reactor capacity, retrying (${attempt}/12)`);
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+    }
     const blob = await (await fetch(referenceImageUrl)).blob();
     const ref = await model.uploadFile(blob, { name: "reference.jpg" });
     await model.setImage({ image: ref });

@@ -17,6 +17,8 @@ export type ForkStatus = "starting" | "simulating" | "done" | "failed";
 export interface ImagineCallbacks {
   onTile(id: string, el: HTMLVideoElement | HTMLCanvasElement): void;
   onStatus(id: string, status: ForkStatus): void;
+  /** Frames captured so far in this fork (the imagined future), oldest first. */
+  onFrames?(id: string, frames: string[]): void;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -37,11 +39,15 @@ async function runFork(kind: "reactor" | "static", referenceUrl: string, base: s
       w.sendAction(a);
       await sleep(a.duration_ms + 300);
       const f = w.captureFrame(640, 0.8);
-      if (f) frames.push(f);
+      if (f) {
+        frames.push(f);
+        cb.onFrames?.(opt.id, [...frames]);
+      }
     }
     await sleep(900); // let the last chunk land
     const last = w.captureFrame(640, 0.8);
     if (last) frames.push(last);
+    cb.onFrames?.(opt.id, [...frames]);
     cb.onStatus(opt.id, "done");
   } catch (e) {
     console.warn("[imagine] fork failed", opt.id, e);

@@ -82,4 +82,6 @@ Findings and fixes:
 - A field-name clash in the event log silently dropped the only recordings, so recordings now go back in the queue if a model call fails. `tests/test_live_flow.py` covers listen → record → remember → imagine.
 - Plan steps wait for their move to finish (`busy_until`). The "turn toward the voice" maneuver turns by the remembered bearing, not a fixed 90°.
 
-**Still to do:** run in the real Reactor world with real imagination forks. That's blocked: the Reactor account ran out of credits (HTTP 402).
+**Reactor run (real imagination forks), 2026-10-08:** at 10 s it heard "Help, I'm stuck under here" and remembered it at −50°, about 6 m. It then started 3 real Reactor forks from its current frame. ER 2 judged the imagined outcomes: **turn left = progress 9/10, risk 1/10** ("enters the room where the voice originated"); straight on = 3/10 ("a different, empty office further down the hallway"); turn right = 1/10. It carried out the left turn and **located the worker at 78 s**.
+- **Imagination took 55 s with real forks** because Reactor was short on capacity (some sessions returned `429 no available capacity` before starting). The app now retries for up to about 1 minute. For the demo, start the scenario a little early, or pre-record a backup.
+- Fork tiles keep the captured frames after each fork session ends; before this fix they went black.

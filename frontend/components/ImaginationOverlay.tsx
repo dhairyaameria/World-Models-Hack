@@ -14,6 +14,7 @@ export interface ImaginationView {
   options: ImagineOption[];
   status: Record<string, ForkStatus>;
   tiles: Record<string, HTMLVideoElement | HTMLCanvasElement>;
+  frames?: Record<string, string[]>; // captured frames per fork (kept after the fork session ends)
   verdict?: { scores: ImagineScore[]; chosen_id: string; reason: string };
 }
 
@@ -57,11 +58,31 @@ export function ImaginationOverlay({ view }: { view: ImaginationView }) {
                 {chosen && <span className="rounded bg-green-500 px-2 text-xs text-black">CHOSEN</span>}
                 {v && !chosen && <span className="text-red-400">✗</span>}
               </div>
-              <div className="relative aspect-video bg-black"
-                ref={(el) => {
-                  const tile = view.tiles[o.id];
-                  if (el && tile && el.firstChild !== tile) el.replaceChildren(tile);
-                }} />
+              {(() => {
+                const frames = view.frames?.[o.id] ?? [];
+                const done = view.status[o.id] === "done" || view.status[o.id] === "failed" || !!v;
+                if (done && frames.length) {
+                  return (
+                    <div className="bg-black">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img alt="imagined outcome" className="aspect-video w-full object-cover" src={`data:image/jpeg;base64,${frames[frames.length - 1]}`} />
+                      <div className="flex gap-1 p-1">
+                        {frames.map((f, i) => (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img key={i} alt={`step ${i + 1}`} className="h-10 flex-1 rounded object-cover opacity-80" src={`data:image/jpeg;base64,${f}`} />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="relative aspect-video bg-black"
+                    ref={(el) => {
+                      const tile = view.tiles[o.id];
+                      if (el && tile && el.firstChild !== tile) el.replaceChildren(tile);
+                    }} />
+                );
+              })()}
               <div className="flex-1 space-y-1 bg-slate-900 p-2 text-xs">
                 {!s && <div className="text-slate-400">{STATUS_TEXT[view.status[o.id] ?? "starting"]}</div>}
                 {s && (

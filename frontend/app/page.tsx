@@ -15,7 +15,7 @@ const VERDICT_HOLD_MS = 4500;
 
 const FRAME_INTERVAL_MS = Number(process.env.NEXT_PUBLIC_FRAME_INTERVAL_MS ?? 500);
 type WorldKind = "static" | "reactor";
-type LogEntry = { id: number; t: number; text: string; override?: string | null; thumb?: string | null };
+type LogEntry = { id: number; t: number; text: string; override?: string | null; thumb?: string | null; repeat?: number };
 type Banner = { text: string; tone: "danger" | "found" };
 
 // Operator palette: inject a sound relative to the robot's current pose (POST /audio/trigger).
@@ -110,7 +110,9 @@ export default function MissionControl() {
       hazardsAvoided: s.hazardsAvoided + (d.safety_override || (d.hazards.length && d.action.move !== "W") ? 1 : 0),
     }));
     const entry = { id: logId.current++, t: Date.now(), text: d.reason, override: d.safety_override, thumb: lastThumb.current };
-    setLog((l) => [entry, ...l].slice(0, 200));
+    setLog((l) => (l[0] && l[0].text === entry.text && !entry.override
+      ? [{ ...l[0], t: entry.t, thumb: entry.thumb, repeat: (l[0].repeat ?? 1) + 1 }, ...l.slice(1)]
+      : [entry, ...l].slice(0, 200)));
   }, []);
 
   const imagine = useCallback(async (req: Extract<ServerMessage, { type: "imagine_request" }>) => {
@@ -125,6 +127,7 @@ export default function MissionControl() {
     const options = await runImagination(worldKindRef.current, blob, scenario.world_prompt, req.options, {
       onTile: (id, el) => setImagineView((v) => (v ? { ...v, tiles: { ...v.tiles, [id]: el } } : v)),
       onStatus: (id, st) => setImagineView((v) => (v ? { ...v, status: { ...v.status, [id]: st } } : v)),
+      onFrames: (id, fr) => setImagineView((v) => (v ? { ...v, frames: { ...v.frames, [id]: fr } } : v)),
     });
     backend.current?.send({ type: "imagine_results", episode_id: req.episode_id, request_id: req.request_id, options });
   }, []);
@@ -351,6 +354,7 @@ export default function MissionControl() {
                     <span className="mr-2 font-mono text-xs text-slate-500">{new Date(e.t).toLocaleTimeString()}</span>
                     {e.override ? <b className="text-red-400">OVERRIDE: {e.override} </b> : null}
                     {e.text}
+                    {e.repeat && e.repeat > 1 ? <span className="ml-1 text-xs text-slate-500">×{e.repeat}</span> : null}
                   </summary>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   {e.thumb && <img alt="frame" className="mt-1 w-full rounded" src={`data:image/jpeg;base64,${e.thumb}`} />}
