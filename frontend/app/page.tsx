@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioRadar } from "@/components/AudioRadar";
+import { EpisodesPanel } from "@/components/EpisodesPanel";
 import { HudOverlay } from "@/components/HudOverlay";
 import { ImaginationOverlay, type ImaginationView } from "@/components/ImaginationOverlay";
 import { runImagination } from "@/lib/imagine";
@@ -66,6 +67,7 @@ export default function MissionControl() {
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState({ steps: 0, survivors: 0, hazardsAvoided: 0, elapsedS: 0 });
   const [tab, setTab] = useState<"log" | "imagination" | "episodes">("log");
+  const [episodesVersion, setEpisodesVersion] = useState(0);
 
   const backend = useRef<BackendClient | null>(null);
   const world = useRef<World | null>(null);
@@ -156,6 +158,8 @@ export default function MissionControl() {
           await world.current?.resume();
           imagining.current = false;
         }, VERDICT_HOLD_MS);
+      } else if (msg.type === "episode_summary") {
+        setEpisodesVersion((v) => v + 1);
       } else if (msg.type === "error") setError(msg.message);
     });
   }, [handleDecision, imagine, connected]);
@@ -223,7 +227,7 @@ export default function MissionControl() {
     if (hearing) void player.current.playOnce(CALLOUT_URL, 0.8); // "If you can hear me, call out!"
   }
 
-  async function stop(outcome: "timeout" | "escaped" | "failed" = "timeout") {
+  async function stop(outcome: "timeout" | "escaped" | "failed" | "rescued" = "timeout") {
     if (episodeId) backend.current?.send({ type: "end_episode", episode_id: episodeId, outcome });
     episodeRef.current = null;
     setEpisodeId(null);
@@ -288,7 +292,8 @@ export default function MissionControl() {
             disabled={!connected || !scenarioId} onClick={start}>Start</button>
         ) : (
           <>
-            <button className="rounded bg-red-600 px-4 py-1 font-semibold hover:bg-red-500" onClick={() => stop()}>Stop</button>
+            <button className="rounded bg-red-600 px-4 py-1 font-semibold hover:bg-red-500"
+              onClick={() => stop(stats.survivors > 0 ? "rescued" : "timeout")}>Stop</button>
             <button className="rounded bg-amber-600 px-3 py-1 text-sm hover:bg-amber-500" onClick={triggerEvent}>Disaster event</button>
           </>
         )}
@@ -368,7 +373,7 @@ export default function MissionControl() {
                   <div>{h.reason}</div>
                 </div>
               )))}
-            {tab === "episodes" && <p className="text-slate-500">Episode history arrives in P10.</p>}
+            {tab === "episodes" && <EpisodesPanel key={scenarioId} refreshKey={episodesVersion} scenarioId={scenarioId} />}
           </div>
         </aside>
       </main>

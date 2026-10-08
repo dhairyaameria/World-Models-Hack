@@ -37,6 +37,7 @@ from .models import (  # noqa: E402
     SetAgent,
     StartEpisode,
 )
+from .episodes import SCORE_RUBRIC, summarize, timeline  # noqa: E402
 from .scenarios import get_scenario, get_scenarios  # noqa: E402
 from .state import Episode, EpisodeStore  # noqa: E402
 
@@ -253,7 +254,7 @@ async def handle(conn: Connection, msg: Any) -> None:
         ep.record("end", outcome=msg.outcome)
         path = ep.save()
         log.info("episode %s ended outcome=%s saved=%s", ep.id, msg.outcome, path.name)
-        await conn.send(EpisodeSummary(episode_id=ep.id, score=0, outcome=msg.outcome))
+        await conn.send(EpisodeSummary(episode_id=ep.id, score=ep.summary()["score"], outcome=msg.outcome))
 
 
 def _require(episode_id: str) -> Episode:
@@ -276,8 +277,25 @@ def scenarios():
 
 
 @app.get("/episodes")
-def episodes():
-    return store.list()
+def episodes() -> dict[str, Any]:
+    from .scenarios import get_scenario as _sc
+
+    items = store.list()
+    for it in items:
+        sc = _sc(it.get("scenario_id") or "")
+        if sc:
+            it["scenario_title"] = sc.title
+    return {"episodes": items, "score_rubric": SCORE_RUBRIC}
+
+
+@app.get("/episodes/{episode_id}")
+def episode_detail(episode_id: str) -> dict[str, Any]:
+    d = store.load(episode_id)
+    if d is None:
+        raise HTTPException(404, f"unknown episode {episode_id}")
+    sc = get_scenario(d.get("scenario_id") or "")
+    summary = summarize(d, sc.title if sc else "")
+    return {**summary, "timeline": timeline(d), "trail": d.get("trail", [])}
 
 
 @app.post("/director/trigger")

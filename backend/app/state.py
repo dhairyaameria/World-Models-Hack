@@ -101,35 +101,21 @@ class Episode:
     def record(self, kind: str, **data: Any) -> None:
         self.log.append({"t": round(time.time() - self.started_at, 3), "kind": kind, **data})
 
+    def raw(self) -> dict[str, Any]:
+        return {"episode_id": self.id, "scenario_id": self.scenario.id, "agent": self.agent,
+                "mode": self.mode, "outcome": self.outcome, "pair_id": self.pair_id,
+                "imagination": self.imagination, "hearing": self.hearing,
+                "started_at": self.started_at, "trail": self.trail, "log": self.log}
+
     def summary(self) -> dict[str, Any]:
-        return {
-            "episode_id": self.id,
-            "scenario_id": self.scenario.id,
-            "agent": self.agent,
-            "mode": self.mode,
-            "score": None,
-            "outcome": self.outcome,
-            "lessons_count": 0,
-            "steps": self.steps,
-        }
+        from .episodes import summarize
+
+        return summarize(self.raw(), self.scenario.title)
 
     def save(self) -> Path:
         DATA_DIR.joinpath("episodes").mkdir(parents=True, exist_ok=True)
         path = DATA_DIR / "episodes" / f"{self.id}.json"
-        path.write_text(
-            json.dumps(
-                {
-                    **self.summary(),
-                    "pair_id": self.pair_id,
-                    "imagination": self.imagination,
-                    "hearing": self.hearing,
-                    "started_at": self.started_at,
-                    "trail": self.trail,
-                    "log": self.log,
-                },
-                indent=1,
-            )
-        )
+        path.write_text(json.dumps({**self.summary(), **self.raw()}, indent=1))
         return path
 
 
@@ -145,14 +131,27 @@ class EpisodeStore:
     def get(self, episode_id: str) -> Optional[Episode]:
         return self.episodes.get(episode_id)
 
+    def load(self, episode_id: str) -> Optional[dict[str, Any]]:
+        """Raw episode (live or saved) for summaries/timelines."""
+        if episode_id in self.episodes:
+            ep = self.episodes[episode_id]
+            return {**ep.raw(), "scenario_title": ep.scenario.title}
+        f = DATA_DIR / "episodes" / f"{episode_id}.json"
+        return json.loads(f.read_text()) if f.exists() else None
+
     def list(self) -> list[dict[str, Any]]:
-        live = {e.id: e.summary() for e in self.episodes.values()}
+        """Summaries of all episodes, oldest first. Saved files are re-summarized so older
+        episodes get the current fields too."""
+        from .episodes import summarize
+
+        out = {e.id: e.summary() for e in self.episodes.values()}
         saved_dir = DATA_DIR / "episodes"
         if saved_dir.exists():
             for f in saved_dir.glob("*.json"):
-                if f.stem not in live:
-                    d = json.loads(f.read_text())
-                    live[f.stem] = {k: d.get(k) for k in
-                                    ("episode_id", "scenario_id", "agent", "mode", "score",
-                                     "outcome", "lessons_count", "steps")}
-        return list(live.values())
+                if f.stem not in out:
+                    try:
+                        d = json.loads(f.read_text())
+                    except json.JSONDecodeError:
+                        continue
+                    out[f.stem] = summarize(d, d.get("scenario_title", ""))
+        return sorted(out.values(), key=lambda s: s.get("started_at") or 0)

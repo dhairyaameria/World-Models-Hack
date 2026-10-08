@@ -70,3 +70,27 @@ def test_dead_reckoning():
     assert abs(p.heading_deg - 90) < 1e-6
     p = integrate(p, Action(move="W", duration_ms=1000))
     assert abs(p.x - 1.0) < 1e-6 and abs(p.y - 1.0) < 1e-6
+
+
+def test_episode_history_and_detail():
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps({"type": "start_episode", "scenario_id": "office_trapped_worker",
+                                 "mode": "autopilot", "agent": "cloud", "imagination": False, "hearing": True}))
+        eid = recv(ws, "episode_started")["episode_id"]
+        ws.send_text(json.dumps({"type": "end_episode", "episode_id": eid, "outcome": "timeout"}))
+        assert recv(ws, "episode_summary")["score"] == 0
+    body = client.get("/episodes").json()
+    assert "score_rubric" in body and any(e["episode_id"] == eid for e in body["episodes"])
+    detail = client.get(f"/episodes/{eid}").json()
+    assert detail["scenario_title"] == "Earthquake: Trapped Worker"
+    assert [t["kind"] for t in detail["timeline"]][0] == "start" and detail["timeline"][-1]["kind"] == "end"
+    assert client.get("/episodes/nope").status_code == 404
+
+
+def test_score_rubric():
+    from app.episodes import score
+    assert score(0, None, 0) == 0
+    assert score(1, 0, 0) == 70          # found immediately
+    assert score(1, 120, 0) == 50        # found at the time limit
+    assert score(1, 60, 2) == 54
+    assert score(3, 0, 0) == 100

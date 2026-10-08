@@ -12,6 +12,7 @@ An autonomous disaster-rescue agent that sees and hears, running inside a real-t
 | P3 live ER 2 agent + safety layer | Done: drives a real Reactor world on its own (~2 s/decision); safety rules unit-tested. Example frames in the prompt (few-shot) are still to do |
 | P16/P17 hearing | Done: audio engine + simulated mic array, audio sent to ER 2 only on sound events, sound-pursuit controller, hearing safety rules, positioned speaker playback, audio radar, inject palette. Found survivors by sound in both Static and Reactor worlds. The sound-source editor (/editor) is still to do |
 | Call-and-listen + imagination (P5/P6) | Done and verified in both the Static and Reactor worlds: brief sounds recorded once, classified (person vs dog), remembered and triangulated; 3 imagined routes run as real Reactor forks and scored by ER 2; the best one is carried out (worker found at 78 s) |
+| P10 episode history | Done: Episodes tab with summary tiles, score-per-episode chart (hover tooltips), scenario filter, outcome badges, expandable timelines. Score is a transparent rule-based rubric until the P9 judge model exists |
 | Others | Not started |
 
 ## Setup
