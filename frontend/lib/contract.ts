@@ -82,8 +82,8 @@ export type ServerMessage =
   | { type: "director_event"; episode_id: string; kind: "director" | "trap" | "reveal"; world_prompt: string; clause?: string; caption: string; source_id?: string | null }
   | { type: "episode_summary"; episode_id: string; score: number; outcome: Outcome; lessons: string[] }
   | { type: "audio_state"; episode_id: string; ts: number; pose: Pose; sources: AudioSourceState[] }
-  | { type: "imagine_request"; episode_id: string; request_id: string; options: unknown[] }
-  | { type: "imagine_verdict"; episode_id: string; request_id: string; scores: unknown[]; chosen_id: string; reason: string }
+  | { type: "imagine_request"; episode_id: string; request_id: string; options: { id: string; label: string; world_prompt: string; drive: Action[] }[] }
+  | { type: "imagine_verdict"; episode_id: string; request_id: string; scores: { id: string; risk: number; progress: number; summary: string }[]; chosen_id: string; reason: string }
   | { type: "error"; message: string };
 
 export type ClientMessage =
@@ -91,6 +91,7 @@ export type ClientMessage =
   | { type: "set_agent"; episode_id: string; agent: AgentName }
   | { type: "network_sim"; offline: boolean }
   | { type: "frame"; episode_id: string; ts: number; jpeg_b64: string }
+  | { type: "imagine_results"; episode_id: string; request_id: string; options: { id: string; label: string; frames_b64: string[] }[] }
   | { type: "end_episode"; episode_id: string; outcome: Outcome };
 
 export const BACKEND_HTTP = process.env.NEXT_PUBLIC_BACKEND_HTTP ?? "http://localhost:8000";

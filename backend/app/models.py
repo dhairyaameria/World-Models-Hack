@@ -11,7 +11,7 @@ Look = Literal["left", "right", "up", "down", "none"]
 AgentName = Literal["cloud", "onboard", "baseline"]
 Mode = Literal["autopilot", "survivor", "collect"]
 Outcome = Literal["escaped", "rescued", "failed", "timeout"]
-SoundKind = Literal["voice", "tapping", "gas_hiss", "creak", "water", "alarm", "fire", "tv_radio"]
+SoundKind = Literal["voice", "tapping", "gas_hiss", "creak", "water", "alarm", "fire", "tv_radio", "dog"]
 
 
 # ---------- scenario ----------
@@ -35,6 +35,12 @@ class Reveal(BaseModel):
     caption: str
 
 
+class Play(BaseModel):
+    """One utterance: the clip plays once, starting at_s seconds into the episode."""
+    at_s: float
+    clip_url: Optional[str] = None  # defaults to the source's clip_url
+
+
 class AudioSource(BaseModel):
     id: str
     kind: SoundKind
@@ -51,6 +57,8 @@ class AudioSource(BaseModel):
     is_decoy: bool = False
     urgency: Optional[Literal[1, 2, 3]] = None
     reveal: Optional[Reveal] = None
+    # If set, the source is NOT continuous: it plays each clip once at these times, then goes quiet.
+    plays: Optional[list[Play]] = None
 
 
 class Scenario(BaseModel):
@@ -187,6 +195,8 @@ class AudioSourceState(BaseModel):
     gain: float
     muffled: bool
     playing: bool
+    once: bool = False        # play-once utterance (frontend starts the clip fresh on each play)
+    play_index: int = -1      # which utterance is playing (changes -> start the clip again)
 
 
 class AudioState(BaseModel):

@@ -8,7 +8,12 @@ import type { Action } from "./contract";
 import { composePrompt } from "./prompts";
 
 export interface World {
-  start(referenceImageUrl: string, prompt: string): Promise<void>;
+  /** prompt = scenario base prompt; events = extra clauses (e.g. an imagined maneuver). */
+  start(referenceImageUrl: string, prompt: string, events?: string[]): Promise<void>;
+  pause(): Promise<void>;
+  resume(): Promise<void>;
+  /** Wait until the first real frame is visible (or timeout). */
+  ready(timeoutMs?: number): Promise<boolean>;
   /** Apply an action for action.duration_ms, then go idle. A newer action replaces it. */
   sendAction(action: Action): void;
   /** Add a scene event clause (director event, trap, reveal) on top of the base prompt. */
@@ -34,6 +39,14 @@ function frameToJpeg(source: CanvasImageSource, w: number, h: number, maxWidth: 
 // token that created it, so memoize one token per page and re-mint only near expiry.
 let cachedToken: { jwt: string; expiresAt: number } | null = null;
 let pendingToken: Promise<string> | null = null;
+
+/** Current frame of a world as a JPEG Blob (for starting imagination forks from "now"). */
+export function frameBlob(world: World, maxWidth = 1280): Blob | null {
+  const b64 = world.captureFrame(maxWidth, 0.9);
+  if (!b64) return null;
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return new Blob([bytes], { type: "image/jpeg" });
+}
 
 async function fetchReactorJwt(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt - Date.now() / 1000 > 300) return cachedToken.jwt;
@@ -66,7 +79,7 @@ export class ReactorWorld implements World {
     this.video.playsInline = true;
   }
 
-  async start(referenceImageUrl: string, prompt: string) {
+  async start(referenceImageUrl: string, prompt: string, events: string[] = []) {
     const model = new LingbotWorld2Model();
     this.model = model;
     model.on("statusChanged", (s) => this.onStatus?.(s));
@@ -81,11 +94,28 @@ export class ReactorWorld implements World {
     const ref = await model.uploadFile(blob, { name: "reference.jpg" });
     await model.setImage({ image: ref });
     this.base = prompt;
-    this.events = [];
+    this.events = events;
     this.moving = false;
-    await model.setPrompt({ prompt: composePrompt(this.base, false) });
+    await model.setPrompt({ prompt: composePrompt(this.base, false, this.events) });
     await model.setRotationSpeedDeg({ rotation_speed_deg: this.rotationSpeedDeg });
     await model.start();
+  }
+
+  async pause() {
+    await this.model?.pause();
+  }
+
+  async resume() {
+    await this.model?.resume();
+  }
+
+  async ready(timeoutMs = 30000) {
+    const until = performance.now() + timeoutMs;
+    while (performance.now() < until) {
+      if (this.video.videoWidth > 0 && this.video.readyState >= 2) return true;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return false;
   }
 
   sendAction(action: Action) {
@@ -154,9 +184,11 @@ export class StaticWorld implements World {
     this.video.height = 720;
   }
 
-  async start(referenceImageUrl: string, prompt: string) {
+  private paused = false;
+
+  async start(referenceImageUrl: string, prompt: string, events: string[] = []) {
     this.onStatus?.("connecting");
-    this.caption = prompt;
+    this.caption = events.length ? events[events.length - 1] : prompt;
     this.img = await new Promise<HTMLImageElement | null>((resolve) => {
       const img = new Image();
       img.crossOrigin = "anonymous";
@@ -169,7 +201,7 @@ export class StaticWorld implements World {
     const tick = (now: number) => {
       const dt = (now - last) / 1000;
       last = now;
-      if (now > this.idleAt) this.vel = { yaw: 0, zoom: 0 };
+      if (now > this.idleAt || this.paused) this.vel = { yaw: 0, zoom: 0 };
       this.cam.yaw += this.vel.yaw * dt;
       this.cam.zoom = Math.min(2.5, Math.max(1, this.cam.zoom + this.vel.zoom * dt));
       this.draw();
@@ -190,6 +222,18 @@ export class StaticWorld implements World {
 
   async addEvent(clause: string) {
     this.caption = clause;
+  }
+
+  async pause() {
+    this.paused = true;
+  }
+
+  async resume() {
+    this.paused = false;
+  }
+
+  async ready() {
+    return true;
   }
 
   private draw() {

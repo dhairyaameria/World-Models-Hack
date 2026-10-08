@@ -101,7 +101,25 @@ def fire_alarm(seconds: float = 4.0) -> np.ndarray:
     return _fade(_norm(np.sign(tone) * 0.3 + tone * 0.7, 0.6))
 
 
+def dog_bark(seconds: float = 2.2) -> np.ndarray:
+    """Two-three barks: sharp attack, harmonic rasp ~450 Hz with a fast pitch drop, noisy breath."""
+    n = int(SR * seconds)
+    out = np.zeros(n, dtype=np.float32)
+    for start, f0, dur in ((0.15, 520, 0.22), (0.55, 480, 0.20), (1.25, 560, 0.26)):
+        i, m = int(start * SR), int(dur * SR)
+        tt = np.arange(m) / SR
+        f = f0 * (1.25 - 0.45 * tt / dur)                     # "woof" pitch drop
+        phase = 2 * np.pi * np.cumsum(f) / SR
+        voiced = sum(np.sin(k * phase) / k ** 0.8 for k in range(1, 9))
+        rasp = _rng.standard_normal(m) * 0.6
+        env = np.minimum(1, tt / 0.012) * np.exp(-tt / (dur * 0.45))
+        body = (voiced * (0.7 + 0.3 * np.sin(2 * np.pi * 35 * tt)) + rasp) * env
+        out[i:i + m] += _lowpass(body, 0.45)
+    return _fade(_norm(out, 0.85))
+
+
 EFFECTS = {
+    "dog_bark": dog_bark,
     "gas_hiss": gas_hiss,
     "rushing_water": rushing_water,
     "creak": structural_creak,
@@ -109,6 +127,38 @@ EFFECTS = {
     "fire_crackle": fire_crackle,
     "fire_alarm": fire_alarm,
 }
+
+
+def trim_silence(x: np.ndarray, sr: int, threshold: float = 0.02, pad_s: float = 0.15,
+                 max_gap_s: float = 0.6) -> np.ndarray:
+    """Drop leading/trailing silence and shorten long internal pauses (TTS output pads a lot)."""
+    if len(x) == 0:
+        return x
+    env = np.convolve(np.abs(x), np.ones(int(0.02 * sr)) / int(0.02 * sr), mode="same")
+    loud = env > threshold * float(np.max(env))
+    if not loud.any():
+        return x
+    idx = np.flatnonzero(loud)
+    pad = int(pad_s * sr)
+    x = x[max(0, idx[0] - pad): idx[-1] + pad]
+    loud = loud[max(0, idx[0] - pad): idx[-1] + pad]
+    # collapse internal silences longer than max_gap_s
+    out, i, gap = [], 0, int(max_gap_s * sr)
+    while i < len(x):
+        j = i
+        while j < len(x) and not loud[j]:
+            j += 1
+        if j - i > gap:
+            out.append(x[i:i + gap // 2])
+            out.append(x[j - gap // 2:j])
+        else:
+            out.append(x[i:j])
+        k = j
+        while k < len(x) and loud[k]:
+            k += 1
+        out.append(x[j:k])
+        i = k
+    return np.concatenate(out).astype(np.float32)
 
 
 def muffle(x: np.ndarray) -> np.ndarray:

@@ -20,6 +20,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from .autopilot import live_decision  # noqa: E402
 from .mock_agent import mock_decision  # noqa: E402
 from .audio_engine import position_from  # noqa: E402
+from .imagination import fallback_verdict, score as score_imagination  # noqa: E402
 from .models import (  # noqa: E402
     AudioState,
     AudioTrigger,
@@ -41,6 +42,7 @@ from .state import Episode, EpisodeStore  # noqa: E402
 
 AGENT_MODE = os.getenv("AGENT_MODE", "mock")
 AUDIO_TICK_S = 0.25
+IMAGINE_TIMEOUT_S = float(os.getenv("IMAGINE_TIMEOUT_S", "75"))
 DECISION_MIN_INTERVAL_S = float(os.getenv("DECISION_MIN_INTERVAL_MS", "500")) / 1000
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -92,6 +94,13 @@ class Connection:
             ep = store.get(episode_id)
             if frame is None or ep is None or ep.outcome is not None:
                 return
+            if ep.imagining:
+                p = ep.pending_imagination
+                if p is not None and time.time() - p.started > IMAGINE_TIMEOUT_S:
+                    await self.finish_imagination(ep, fallback_verdict(p, ep.id, "timed out"))
+                continue  # the world is paused while the robot imagines
+            if time.time() < ep.busy_until:
+                continue  # still executing the previous plan step
             last = time.monotonic()
             try:
                 decision = await decide(ep, frame, offline=self.offline)
@@ -102,6 +111,31 @@ class Connection:
             log.info("decision ep=%s move=%s look=%s latency=%.0fms", ep.id,
                      decision.action.move, decision.action.look, decision.latency_ms)
             await self.send(decision)
+            while ep.outbox:
+                await self.send(ep.outbox.pop(0))
+
+    async def finish_imagination(self, ep: Episode, verdict) -> None:
+        p = ep.pending_imagination
+        chosen = p.maneuvers[verdict.chosen_id]
+        ep.plan = [a.model_copy() for a in chosen.drive]
+        ep.plan_label, ep.plan_total = chosen.label, len(ep.plan)
+        ep.pending_imagination, ep.imagining = None, False
+        ep.record("imagine_verdict", chosen=verdict.chosen_id, reason=verdict.reason,
+                  scores=[s.model_dump() for s in verdict.scores])
+        log.info("imagination ep=%s chose %s", ep.id, verdict.chosen_id)
+        await self.send(verdict)
+
+    async def handle_imagine_results(self, ep: Episode, msg: ImagineResults) -> None:
+        p = ep.pending_imagination
+        if p is None or msg.request_id != p.request_id:
+            return
+        try:
+            verdict = await asyncio.wait_for(
+                asyncio.to_thread(score_imagination, p, msg, ep.last_jpeg), timeout=25)
+        except Exception as e:
+            log.warning("imagination scoring failed: %s %s", type(e).__name__, str(e)[:200])
+            verdict = fallback_verdict(p, ep.id, "scoring failed")
+        await self.finish_imagination(ep, verdict)
 
     def start_audio(self, ep: Episode) -> None:
         if ep.audio is not None:
@@ -111,6 +145,10 @@ class Connection:
         """Ground-truth audio for speakers/radar at ~4 Hz, plus reveals when the robot arrives."""
         while ep.outcome is None:
             try:
+                p = ep.pending_imagination
+                if ep.imagining and p is not None and time.time() - p.started > IMAGINE_TIMEOUT_S:
+                    await self.finish_imagination(ep, fallback_verdict(p, ep.id, "timed out"))
+                ep.audio.tick(ep.pose)
                 await self.send(AudioState(episode_id=ep.id, ts=time.time(), pose=ep.pose,
                                            sources=ep.audio.states(ep.pose)))
                 for src in ep.audio.due_reveals(ep.pose):
@@ -208,6 +246,7 @@ async def handle(conn: Connection, msg: Any) -> None:
         ep = _require(msg.episode_id)
         ep.record("imagine_results", request_id=msg.request_id,
                   options=[o.label for o in msg.options])
+        asyncio.create_task(conn.handle_imagine_results(ep, msg))
     elif isinstance(msg, EndEpisode):
         ep = _require(msg.episode_id)
         ep.outcome = msg.outcome

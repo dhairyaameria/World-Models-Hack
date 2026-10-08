@@ -2,9 +2,50 @@
 
 from __future__ import annotations
 
-from .models import AudioSource, Reveal, Scenario
+from .models import AudioSource, Play, Reveal, Scenario
 
 PRESETS: list[Scenario] = [
+    # Demo scenario: call-and-listen. The robot calls out, a trapped worker answers twice from the side
+    # office on the left and then goes quiet; a dog barks once from the right (not the survivor).
+    Scenario(
+        id="office_trapped_worker",
+        title="Earthquake: Trapped Worker",
+        description="Office corridor after an earthquake. Someone may be trapped in one of the side "
+        "offices. Call out, listen, locate them by sound, and reach them safely.",
+        world_prompt=(
+            "A dusty office corridor after an earthquake. The world contains EXACTLY ONE open office "
+            "doorway on the left wall a few meters ahead at a fixed position AND EXACTLY ONE green glowing "
+            "exit sign at the far end of the corridor at a fixed position AND EXACTLY ONE fallen ceiling "
+            "panel on the floor on the right at a fixed position. Through the doorway: a side office with "
+            "desks and a toppled bookshelf. Scattered papers, hanging cables, grey dust, cold flickering "
+            "light. Gritty, realistic."
+        ),
+        reference_image_url="/static/scenarios/office_trapped_worker.jpg",
+        audio_sources=[
+            AudioSource(
+                id="trapped_worker",
+                kind="voice",
+                position=(-3.5, 3.5),  # inside the side office, through the left doorway (~-45°, 5 m)
+                clip_url="/static/audio/voices/help_im_stuck_weak.wav",
+                plays=[Play(at_s=6), Play(at_s=17, clip_url="/static/audio/voices/please_im_in_here.wav")],
+                transcript="Help! I'm stuck under here! ... Please... I'm in here... I can't move my leg.",
+                urgency=3,
+                reveal=Reveal(
+                    radius_m=4.0,
+                    world_prompt="Inside the side office, a dust-covered office worker lies trapped under "
+                    "the toppled bookshelf, raising one arm toward the camera.",
+                    caption="Office worker trapped under a bookshelf",
+                ),
+            ),
+            AudioSource(
+                id="dog",
+                kind="dog",
+                position=(5.0, 9.0),
+                clip_url="/static/audio/fx/dog_bark.wav",
+                plays=[Play(at_s=11)],
+            ),
+        ],
+    ),
     Scenario(
         id="earthquake_office",
         title="Earthquake: Office Floor",

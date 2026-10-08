@@ -19,6 +19,7 @@ from typing import Any, Optional
 from .models import Action, AgentName, Mode, Pose, Scenario
 from .audio_engine import AudioScene
 from .safety import SafetyLayer
+from .sound_memory import SoundMemory
 
 # Calibrate these against Reactor (P3): how far one second of W moves, how fast "look" turns.
 SPEED_MPS = float(os.getenv("SPEED_MPS", "1.0"))
@@ -75,6 +76,18 @@ class Episode:
     decisions_since_audio: int = 0
     # source_id -> what the model said it is (label, is_hazard, is_decoy_suspected, urgency)
     heard_labels: dict = field(default_factory=dict)
+    memory: SoundMemory = field(default_factory=SoundMemory)
+    # imagination
+    imagining: bool = False
+    allow_imagine: bool = True          # main.py turns this off if no client can run forks
+    pending_imagination: Any = None
+    imagined_targets: set = field(default_factory=set)
+    plan: list = field(default_factory=list)
+    plan_label: str = ""
+    plan_total: int = 0
+    outbox: list = field(default_factory=list)  # messages for the frontend (imagine_request, ...)
+    last_jpeg: Optional[bytes] = None
+    busy_until: float = 0.0  # don't decide again until the current plan step has finished
 
     def __post_init__(self) -> None:
         if self.audio is None:

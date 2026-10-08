@@ -30,7 +30,11 @@ Goals, in priority order:
 Rules for sound: voices may be survivors even when nothing is visible; muffled = behind a wall or
 under debris; a voice that goes silent raises urgency; spoken warnings ("don't come this way") are
 hazard information for that direction; hissing, creaking or rushing water are hazards you may not
-see; TV/radio-like or repeating broadcast voices may be decoys. When survivors compete, prioritize by
+see; TV/radio-like or repeating broadcast voices may be decoys. Animals (e.g. a dog barking) are not
+the human survivor you are searching for: note them, but go to humans first.
+Sounds are often brief: a person may call out only once or twice and then go quiet. When you get a
+recording, classify it carefully (sound_type) and estimate where it came from; you will NOT hear it
+again, so commit to the remembered position. When survivors compete, prioritize by
 urgency, then whether they can be reached safely, then distance.
 A survivor you can hear outranks the exit: go to them first, even if the exit is visible and the
 voice comes from the side or behind you. Turn toward the sound before moving.
@@ -59,10 +63,15 @@ class HazardOut(PointOut):
         return min(3, max(1, v))
 
 
+SOUND_TYPES = ["human_distress", "child", "human_speech_warning", "dog_or_animal", "tapping", "gas_hiss",
+               "structural_creak", "water", "fire", "alarm", "tv_or_radio", "unknown"]
+
+
 class HeardOut(BaseModel):
     bearing_deg: float
     distance_m: float
     label: str
+    sound_type: str = Field(description="one of: " + ", ".join(SOUND_TYPES))
     is_hazard: bool
     is_decoy_suspected: bool
     urgency: int = Field(description="1 = low, 2 = medium, 3 = critical")

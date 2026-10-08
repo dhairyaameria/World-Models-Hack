@@ -59,13 +59,15 @@ def pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
 
 
 def tts(text: str, style: str, voice: str = "Kore") -> bytes:
-    """Speak `text` in `style` (e.g. 'a weak, exhausted whisper'). Returns WAV bytes."""
+    """Speak `text` in `style`, given as short comma-separated audio tags (e.g. 'weak, exhausted').
+    Tags in [brackets] steer delivery without being read aloud; a prose prefix like "Say this as ..."
+    gets spoken verbatim by this model. Returns WAV bytes."""
     from google.genai import types
 
     resp = with_quota_retry(
         client().models.generate_content,
         model=TTS_MODEL,
-        contents=f"Say this as {style}: {text}",
+        contents=f"[{style}] {text}" if style else text,
         config=types.GenerateContentConfig(
             response_modalities=["AUDIO"],
             speech_config=types.SpeechConfig(
@@ -79,6 +81,15 @@ def tts(text: str, style: str, voice: str = "Kore") -> bytes:
     mime = part.inline_data.mime_type or ""
     rate = int(mime.split("rate=")[1].split(";")[0]) if "rate=" in mime else 24000
     return pcm_to_wav(part.inline_data.data, rate)
+
+
+def transcribe(wav: bytes) -> str:
+    from google.genai import types
+
+    r = with_quota_retry(client().models.generate_content, model=FLASH_MODEL, contents=[
+        types.Part.from_bytes(data=wav, mime_type="audio/wav"),
+        "Transcribe exactly every word spoken. Output only the transcript."])
+    return (r.text or "").strip()
 
 
 def generate_image(prompt: str) -> bytes:

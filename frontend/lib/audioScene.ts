@@ -13,6 +13,8 @@ export interface AudioSourceState {
   gain: number;
   muffled: boolean;
   playing: boolean;
+  once?: boolean;      // play-once utterance
+  play_index?: number; // changes when a new utterance starts
 }
 
 interface Voice {
@@ -27,6 +29,7 @@ export class AudioScenePlayer {
   private master: GainNode | null = null;
   private buffers = new Map<string, Promise<AudioBuffer | null>>();
   private voices = new Map<string, Voice>();
+  private lastPlay = new Map<string, number>();
   private _volume = 0.9;
 
   /** Must be called from a user gesture (e.g. the Start click) to unlock audio. */
@@ -57,13 +60,27 @@ export class AudioScenePlayer {
     return p;
   }
 
+  /** Non-spatial one-shot (e.g. the robot's own loudspeaker call-out). */
+  async playOnce(url: string, gain = 1) {
+    if (!this.ctx) return;
+    const buffer = await this.load(url);
+    if (!buffer) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = this.ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(this.master!);
+    src.start();
+  }
+
   private async start(s: AudioSourceState) {
     const ctx = this.ctx!;
     const buffer = await this.load(s.clip_url);
     if (!buffer || this.voices.has(s.id)) return;
     const src = ctx.createBufferSource();
     src.buffer = buffer;
-    src.loop = true;
+    src.loop = !s.once;
+    if (s.once) src.onended = () => { if (this.voices.get(s.id)?.src === src) this.voices.delete(s.id); };
     const filter = ctx.createBiquadFilter();
     filter.type = "lowpass";
     const gain = ctx.createGain();
@@ -79,8 +96,22 @@ export class AudioScenePlayer {
     if (!ctx) return;
     const t = ctx.currentTime;
     for (const s of sources) {
+      if (s.once) {
+        // play-once utterance: start each play_index exactly once, from the beginning
+        const idx = s.play_index ?? -1;
+        if (s.playing && idx >= 0 && idx !== this.lastPlay.get(s.id) && s.gain > 0.01) {
+          this.lastPlay.set(s.id, idx);
+          const old = this.voices.get(s.id);
+          if (old) {
+            try { old.src.stop(); } catch {}
+            this.voices.delete(s.id);
+          }
+          void this.start(s);
+        }
+      } else if (s.playing && s.gain > 0.01 && !this.voices.has(s.id)) {
+        void this.start(s);
+      }
       const v = this.voices.get(s.id);
-      if (s.playing && s.gain > 0.01 && !v) void this.start(s);
       if (!v) continue;
       const b = (s.bearing_deg * Math.PI) / 180;
       // Distance attenuation is already in s.gain; keep the panner at a fixed radius for direction only.
@@ -99,5 +130,6 @@ export class AudioScenePlayer {
       v.src.disconnect();
     }
     this.voices.clear();
+    this.lastPlay.clear();
   }
 }

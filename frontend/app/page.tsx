@@ -3,10 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioRadar } from "@/components/AudioRadar";
 import { HudOverlay } from "@/components/HudOverlay";
+import { ImaginationOverlay, type ImaginationView } from "@/components/ImaginationOverlay";
+import { runImagination } from "@/lib/imagine";
 import { AudioScenePlayer, type AudioSourceState } from "@/lib/audioScene";
 import { BackendClient } from "@/lib/backend";
-import { BACKEND_HTTP, type Decision, type Heard, type Mode, type Pose, type Scenario } from "@/lib/contract";
-import { ReactorWorld, StaticWorld, type World } from "@/lib/world";
+import { BACKEND_HTTP, type Decision, type Heard, type Mode, type Pose, type Scenario, type ServerMessage } from "@/lib/contract";
+import { frameBlob, ReactorWorld, StaticWorld, type World } from "@/lib/world";
+
+const CALLOUT_URL = "/static/audio/voices/robot_callout.wav";
+const VERDICT_HOLD_MS = 4500;
 
 const FRAME_INTERVAL_MS = Number(process.env.NEXT_PUBLIC_FRAME_INTERVAL_MS ?? 500);
 type WorldKind = "static" | "reactor";
@@ -41,7 +46,10 @@ export default function MissionControl() {
     process.env.NEXT_PUBLIC_DEFAULT_WORLD === "reactor" ? "reactor" : "static",
   );
   const [mode, setMode] = useState<Mode>("autopilot");
-  const [hearing, setHearing] = useState(false);
+  const [hearing, setHearing] = useState(true);
+  const [imagination, setImagination] = useState(true);
+  const [imagineView, setImagineView] = useState<ImaginationView | null>(null);
+  const [imagineHistory, setImagineHistory] = useState<{ id: string; reason: string; chosen: string }[]>([]);
 
   const [connected, setConnected] = useState(false);
   const [worldStatus, setWorldStatus] = useState("idle");
@@ -68,6 +76,9 @@ export default function MissionControl() {
   const logId = useRef(0);
   const player = useRef<AudioScenePlayer | null>(null);
   const injectId = useRef(0);
+  const imagining = useRef(false);
+  const scenarioRef = useRef<Scenario | null>(null);
+  const worldKindRef = useRef<WorldKind>("static");
 
   useEffect(() => {
     fetch(`${BACKEND_HTTP}/scenarios`)
@@ -102,6 +113,22 @@ export default function MissionControl() {
     setLog((l) => [entry, ...l].slice(0, 200));
   }, []);
 
+  const imagine = useCallback(async (req: Extract<ServerMessage, { type: "imagine_request" }>) => {
+    const main = world.current;
+    const scenario = scenarioRef.current;
+    if (!main || !scenario) return;
+    imagining.current = true;
+    const blob = frameBlob(main);
+    await main.pause();
+    setImagineView({ requestId: req.request_id, options: req.options, status: {}, tiles: {} });
+    if (!blob) return;
+    const options = await runImagination(worldKindRef.current, blob, scenario.world_prompt, req.options, {
+      onTile: (id, el) => setImagineView((v) => (v ? { ...v, tiles: { ...v.tiles, [id]: el } } : v)),
+      onStatus: (id, st) => setImagineView((v) => (v ? { ...v, status: { ...v.status, [id]: st } } : v)),
+    });
+    backend.current?.send({ type: "imagine_results", episode_id: req.episode_id, request_id: req.request_id, options });
+  }, []);
+
   useEffect(() => {
     const client = backend.current;
     if (!client) return;
@@ -115,14 +142,27 @@ export default function MissionControl() {
         setBanner({ text: msg.caption, tone: msg.kind === "reveal" ? "found" : "danger" });
         if (msg.kind === "reveal") setStats((st) => ({ ...st, survivors: st.survivors + 1 }));
         setTimeout(() => setBanner(null), msg.kind === "reveal" ? 5000 : 4000);
+      } else if (msg.type === "imagine_request" && msg.episode_id === episodeRef.current) {
+        void imagine(msg);
+      } else if (msg.type === "imagine_verdict" && msg.episode_id === episodeRef.current) {
+        setImagineView((v) => (v && v.requestId === msg.request_id ? { ...v, verdict: msg } : v));
+        const chosen = msg.chosen_id;
+        setImagineHistory((h) => [{ id: msg.request_id, reason: msg.reason, chosen }, ...h]);
+        setTimeout(async () => {
+          setImagineView(null);
+          await world.current?.resume();
+          imagining.current = false;
+        }, VERDICT_HOLD_MS);
       } else if (msg.type === "error") setError(msg.message);
     });
-  }, [handleDecision, connected]);
+  }, [handleDecision, imagine, connected]);
+
 
   // Frame loop: capture -> backend while an episode runs.
   useEffect(() => {
     if (!episodeId) return;
     const id = setInterval(() => {
+      if (imagining.current) return; // main world is paused while the robot imagines
       const jpeg = world.current?.captureFrame();
       setStats((s) => ({ ...s, elapsedS: (performance.now() - startedAt.current) / 1000 }));
       if (!jpeg) return;
@@ -145,8 +185,14 @@ export default function MissionControl() {
     world.current = w;
     w.video.className = "h-full w-full object-cover";
     videoHost.current?.replaceChildren(w.video);
+    scenarioRef.current = scenario;
+    worldKindRef.current = worldKind;
+    imagining.current = false;
+    setImagineView(null);
+    setImagineHistory([]);
     try {
       await w.start(`${BACKEND_HTTP}${scenario.reference_image_url}`, scenario.world_prompt);
+      await w.ready(40000); // start the episode clock when the world is actually visible
     } catch (e) {
       setError(`World failed to start: ${(e as Error).message}`);
       return;
@@ -159,7 +205,7 @@ export default function MissionControl() {
           resolve(msg.episode_id);
         }
       });
-      client.send({ type: "start_episode", scenario_id: scenario.id, mode, agent: "cloud", imagination: false, hearing });
+      client.send({ type: "start_episode", scenario_id: scenario.id, mode, agent: "cloud", imagination, hearing });
     });
     episodeRef.current = started;
     startedAt.current = performance.now();
@@ -171,6 +217,7 @@ export default function MissionControl() {
     setTruth([]);
     setHearingActive(hearing);
     setEpisodeId(started);
+    if (hearing) void player.current.playOnce(CALLOUT_URL, 0.8); // "If you can hear me, call out!"
   }
 
   async function stop(outcome: "timeout" | "escaped" | "failed" = "timeout") {
@@ -229,6 +276,10 @@ export default function MissionControl() {
           <input type="checkbox" checked={hearing} disabled={running} onChange={(e) => setHearing(e.target.checked)} />
           Hearing
         </label>
+        <label className="flex items-center gap-1 text-sm">
+          <input type="checkbox" checked={imagination} disabled={running} onChange={(e) => setImagination(e.target.checked)} />
+          Imagination
+        </label>
         {!running ? (
           <button className="rounded bg-green-600 px-4 py-1 font-semibold hover:bg-green-500 disabled:opacity-40"
             disabled={!connected || !scenarioId} onClick={start}>Start</button>
@@ -256,6 +307,7 @@ export default function MissionControl() {
           )}
           {running && <HudOverlay decision={decision} receivedAt={receivedAt} trail={trail} stats={stats} />}
           {running && <AudioRadar heard={heard} truth={truth} showTruth={showTruth} hearingOn={hearingActive} />}
+          {imagineView && <ImaginationOverlay view={imagineView} />}
           {banner && (
             <div className={`absolute left-0 right-0 top-1/3 py-3 text-center text-2xl font-bold tracking-wide ${
               banner.tone === "found" ? "bg-green-700/90" : "bg-red-700/90"}`}>
@@ -304,7 +356,14 @@ export default function MissionControl() {
                   {e.thumb && <img alt="frame" className="mt-1 w-full rounded" src={`data:image/jpeg;base64,${e.thumb}`} />}
                 </details>
               )))}
-            {tab === "imagination" && <p className="text-slate-500">Imagination arrives in P5/P6.</p>}
+            {tab === "imagination" && (imagineHistory.length === 0
+              ? <p className="text-slate-500">When the robot locates a survivor, it imagines each route in a forked world before moving.</p>
+              : imagineHistory.map((h) => (
+                <div key={h.id} className="mb-2 rounded bg-slate-900 px-2 py-1">
+                  <div className="text-xs text-sky-300">chose: {h.chosen}</div>
+                  <div>{h.reason}</div>
+                </div>
+              )))}
             {tab === "episodes" && <p className="text-slate-500">Episode history arrives in P10.</p>}
           </div>
         </aside>

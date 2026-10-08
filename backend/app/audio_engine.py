@@ -28,7 +28,7 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 AUDIBLE_GAIN = 0.04          # below this the mic array doesn't pick the source up
 BEARING_SIGMA_DEG = 12.0
 FRONT_BACK_CONFUSION = 0.05
-REVEAL_FACING_DEG = 40.0
+REVEAL_FACING_DEG = 60.0
 
 
 def wrap_deg(a: float) -> float:
@@ -58,6 +58,27 @@ def load_clip(clip_url: str) -> np.ndarray:
     return mono
 
 
+def clip_seconds(clip_url: str) -> float:
+    return len(load_clip(clip_url)) / SR
+
+
+@dataclass
+class Capture:
+    """One finished utterance as the robot recorded it: what it heard and from where.
+    Bearing is the mic-array estimate relative to the robot's heading AT CAPTURE TIME."""
+    source: AudioSource
+    clip_url: str
+    pose: Pose
+    bearing_deg: float
+    distance_m: float
+    gain: float
+    wav: bytes
+    at_s: float
+
+    def estimated_position(self) -> tuple[float, float]:
+        return position_from(self.pose, self.bearing_deg, self.distance_m)
+
+
 @dataclass
 class Estimate:
     """What the mic array reports for one audible source."""
@@ -77,7 +98,9 @@ class AudioScene:
     revealed: set[str] = field(default_factory=set)
     _was_audible: set[str] = field(default_factory=set)
     _pending_event: Optional[str] = None
-    _injected_at: dict[str, float] = field(default_factory=dict)
+    _open_plays: dict = field(default_factory=dict)   # (source_id, idx) -> pose at utterance start
+    _done_plays: set = field(default_factory=set)
+    captures: list = field(default_factory=list)      # finished utterances waiting for the brain
 
     def __post_init__(self) -> None:
         self.rng = np.random.default_rng(self.seed)
@@ -86,7 +109,20 @@ class AudioScene:
     def elapsed(self, now: Optional[float] = None) -> float:
         return (now or time.time()) - self.started_at
 
+    def _windows(self, s: AudioSource) -> list[tuple[int, float, float, str]]:
+        """(index, start, end, clip_url) for each play-once utterance."""
+        out = []
+        for i, p in enumerate(s.plays or []):
+            url = p.clip_url or s.clip_url
+            out.append((i, p.at_s, p.at_s + clip_seconds(url), url))
+        return out
+
+    def _current_play(self, s: AudioSource, t: float):
+        return next((w for w in self._windows(s) if w[1] <= t < w[2]), None)
+
     def _active(self, s: AudioSource, t: float) -> bool:
+        if s.plays is not None:
+            return self._current_play(s, t) is not None
         return t >= s.start_s and (s.stop_s is None or t < s.stop_s)
 
     def gain(self, s: AudioSource, distance: float) -> float:
@@ -94,9 +130,12 @@ class AudioScene:
         return float(g * (0.5 if s.muffled else 1.0))
 
     def inject(self, s: AudioSource) -> None:
-        """Add a source that starts now (operator / compare view)."""
-        s = s.model_copy(update={"start_s": self.elapsed() + s.start_s,
-                                 "stop_s": None if s.stop_s is None else self.elapsed() + s.stop_s})
+        """Add a source that starts now (operator / compare view). Times are relative to now."""
+        now = self.elapsed()
+        update = {"start_s": now + s.start_s, "stop_s": None if s.stop_s is None else now + s.stop_s}
+        if s.plays is not None:
+            update["plays"] = [p.model_copy(update={"at_s": now + p.at_s}) for p in s.plays]
+        s = s.model_copy(update=update)
         self.sources = [x for x in self.sources if x.id != s.id] + [s]
 
     # ----- ground truth for speakers / radar -----
@@ -106,10 +145,12 @@ class AudioScene:
         for s in self.sources:
             bearing, dist = relative(pose, s.position)
             playing = self._active(s, t)
+            play = self._current_play(s, t) if s.plays is not None else None
             out.append(AudioSourceState(
-                id=s.id, kind=s.kind, clip_url=s.clip_url, bearing_deg=round(bearing, 1),
+                id=s.id, kind=s.kind, clip_url=play[3] if play else s.clip_url, bearing_deg=round(bearing, 1),
                 distance_m=round(dist, 2), gain=round(self.gain(s, dist) if playing else 0.0, 3),
-                muffled=s.muffled, playing=playing))
+                muffled=s.muffled, playing=playing, once=s.plays is not None,
+                play_index=play[0] if play else -1))
         return out
 
     # ----- the robot's ears -----
@@ -119,7 +160,7 @@ class AudioScene:
         heard: list[Estimate] = []
         audible_now: set[str] = set()
         for s in self.sources:
-            if not self._active(s, t):
+            if s.plays is not None or not self._active(s, t):
                 continue
             bearing, dist = relative(pose, s.position)
             g = self.gain(s, dist)
@@ -142,6 +183,46 @@ class AudioScene:
             self._pending_event = "a voice went silent"
         self._was_audible = audible_now
         return heard
+
+    def tick(self, pose: Pose) -> None:
+        """Called ~4 Hz. Records each play-once utterance the robot can hear; when it ends, the
+        recording (+ mic-array estimate from where the robot was) is queued for the brain."""
+        t = self.elapsed()
+        for s in self.sources:
+            for i, start, end, url in self._windows(s):
+                key = (s.id, i)
+                if key in self._done_plays:
+                    continue
+                if start <= t < end and key not in self._open_plays:
+                    self._open_plays[key] = Pose(**pose.model_dump())
+                elif t >= end:
+                    self._done_plays.add(key)
+                    at = self._open_plays.pop(key, None)
+                    if at is not None:
+                        self._finish_capture(s, url, at, start)
+
+    def _finish_capture(self, s: AudioSource, url: str, pose: Pose, at_s: float) -> None:
+        bearing, dist = relative(pose, s.position)
+        g = self.gain(s, dist)
+        if g < AUDIBLE_GAIN:
+            return  # too far away / too quiet: the robot never heard it
+        sigma = BEARING_SIGMA_DEG * (1.6 if s.muffled else 1.0) * (1.3 if dist > 10 else 1.0)
+        est_b = bearing + float(self.rng.normal(0, sigma))
+        if self.rng.random() < FRONT_BACK_CONFUSION:
+            est_b = 180 - est_b
+        est_d = dist * float(self.rng.uniform(0.75, 1.25))
+        clip = load_clip(url)
+        if s.muffled:
+            clip = audio_synth.muffle(clip)
+        audio = clip * min(1.0, g * 1.5) + self.rng.normal(0, 0.003, len(clip)).astype(np.float32)
+        buf = io.BytesIO()
+        sf.write(buf, np.clip(audio, -1, 1), SR, format="WAV", subtype="PCM_16")
+        self.captures.append(Capture(s, url, pose, round(wrap_deg(est_b)), round(est_d, 1), g,
+                                     buf.getvalue(), at_s))
+        self._pending_event = f"utterance finished: {s.id}"
+
+    def take_capture(self) -> Optional[Capture]:
+        return self.captures.pop(0) if self.captures else None
 
     def take_event(self) -> Optional[str]:
         ev, self._pending_event = self._pending_event, None

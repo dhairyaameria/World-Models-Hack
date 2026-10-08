@@ -127,46 +127,135 @@ def to_contract(out: DecisionOut) -> tuple[Action, list[PointLabel], list[Hazard
     return action, survivors, hazards, heard
 
 
+LISTEN_S = float(os.getenv("LISTEN_S", "22"))  # after the call-out, hold still this long listening
+
+
+def _decision(ep: Episode, action: Action, reason: str, t0: float, **kw) -> Decision:
+    return Decision(episode_id=ep.id, ts=time.time(), action=action, pose=ep.pose, reason=reason,
+                    source="cloud", latency_ms=(time.perf_counter() - t0) * 1000,
+                    heard=ep.memory.as_heard(ep.pose) if ep.hearing else [], **kw)
+
+
+def capture_mic_text(ep: Episode, cap) -> tuple[str, float, float]:
+    """Mic-array description of a finished utterance, re-expressed relative to the CURRENT pose."""
+    from .audio_engine import clip_seconds, relative
+
+    b, d = relative(ep.pose, cap.estimated_position())
+    loud = "loud" if cap.gain > 0.35 else "moderate" if cap.gain > 0.12 else "faint"
+    text = (f"RECORDING of a sound that has just ended ({clip_seconds(cap.clip_url):.1f} s); it may not repeat. "
+            f"Mic-array estimate: bearing {b:+.0f}° from your current heading, ~{d:.0f} m, {loud}"
+            + (", muffled" if cap.source.muffled else "") + ".")
+    return text, b, d
+
+
 async def live_decision(ep: Episode, jpeg_b64: str) -> Decision:
     jpeg = base64.b64decode(jpeg_b64)
+    ep.last_jpeg = jpeg
     t0 = time.perf_counter()
 
-    heard = ep.audio.hear(ep.pose) if ep.audio else []
+    # 1) Executing a plan chosen by imagination: no model call, safety still applies.
+    if ep.plan:
+        step = ep.plan.pop(0)
+        action, override = ep.safety.check(step, [], heading_deg=ep.pose.heading_deg)
+        n = ep.plan_total - len(ep.plan)
+        ep.busy_until = time.time() + action.duration_ms / 1000
+        ep.apply(action)
+        target = ep.memory.target(ep.pose)
+        return _decision(ep, action, f"Executing imagined plan '{ep.plan_label}' (step {n}/{ep.plan_total}).",
+                         t0, safety_override=override,
+                         priority=f"reach {target.label}" if target else "explore")
+
+    capture = ep.audio.take_capture() if (ep.hearing and ep.audio) else None
+    heard = ep.audio.hear(ep.pose) if ep.audio else []  # continuous sources (hiss, creak, water...)
+
+    # 2) Call-and-listen: right after the call-out, hold still until something answers.
+    if (ep.hearing and capture is None and not ep.memory.items
+            and time.time() - ep.started_at < LISTEN_S):
+        action = Action(move="none", duration_ms=600)
+        ep.apply(action)
+        return _decision(ep, action, "Called out to survivors; holding still and listening for a response.",
+                         t0, priority="listen")
+
+    # 3) Model inputs: a finished utterance (sent once), or continuous sound every Nth step.
     audio_wav = mic_text = None
-    if ep.hearing and heard:
+    cap_b = cap_d = 0.0
+    if capture is not None:
+        audio_wav = capture.wav
+        mic_text, cap_b, cap_d = capture_mic_text(ep, capture)
+        ep.record("audio_sent", audio="utterance", mic=mic_text)
+    elif ep.hearing and heard:
         event = ep.audio.take_event()
         ep.decisions_since_audio += 1
         if event or ep.decisions_since_audio >= AUDIO_EVERY_N:
             ep.decisions_since_audio = 0
             audio_wav = ep.audio.mix(heard)
             mic_text = ep.audio.describe(heard)
-            ep.record("audio_sent", event=event, mic=mic_text)
+            ep.record("audio_sent", audio="continuous", event=event, mic=mic_text)
     elif ep.audio:
         ep.audio.take_event()
 
+    context = build_context(ep, None if audio_wav else (tracked_heard(ep, heard) if ep.hearing else None))
+    if ep.hearing:
+        mem = ep.memory.context(ep.pose, time.time())
+        if mem:
+            context += "\n" + mem
     try:
         out, _ = await asyncio.wait_for(
-            asyncio.to_thread(decide_sync, jpeg,
-                              build_context(ep, None if audio_wav else (tracked_heard(ep, heard) if ep.hearing else None)),
-                              audio_wav, mic_text),
+            asyncio.to_thread(decide_sync, jpeg, context, audio_wav, mic_text),
             timeout=AUDIO_TIMEOUT_S if audio_wav else MODEL_TIMEOUT_S)
     except Exception as e:
         log.warning("ER 2 call failed for %s: %s %s", ep.id, type(e).__name__, str(e)[:200])
+        if capture is not None:
+            ep.audio.captures.insert(0, capture)  # don't lose the only recording; retry next step
         action, reason = timeout_action()
         ep.apply(action)
-        return Decision(episode_id=ep.id, ts=time.time(), action=action, pose=ep.pose, reason=reason,
-                        source="cloud", latency_ms=(time.perf_counter() - t0) * 1000)
+        return _decision(ep, action, reason, t0)
     latency_ms = (time.perf_counter() - t0) * 1000
 
     action, survivors, hazards, model_heard = to_contract(out)
-    if audio_wav:
-        remember_heard(ep, heard, model_heard)
-    heard_out = tracked_heard(ep, heard) if ep.hearing else []
-    target = pursuit_target(heard_out) if ep.hearing else None
-    action, steering = steer_toward(action, target)
+
+    # 4) Remember where the utterance came from (geometry from the mic array, meaning from ER 2).
+    if capture is not None:
+        typed = [(h, o) for h, o in zip(model_heard, out.heard)]
+        if typed:
+            h, o = min(typed, key=lambda ho: _angle(ho[0].bearing_deg, cap_b))
+            r = ep.memory.add(capture.pose, capture.bearing_deg, capture.distance_m, o.sound_type,
+                              h.label, h.urgency, time.time())
+            ep.record("sound_remembered", type=o.sound_type, label=h.label, position=r.position,
+                      observations=len(r.observations))
+            log.info("remembered %s (%s) at %s from %d obs", h.label, o.sound_type,
+                     tuple(round(v, 1) for v in r.position), len(r.observations))
+
+    target = ep.memory.target(ep.pose) if ep.hearing else None
+
+    # 5) First time we know where a survivor is: imagine the routes before committing.
+    if target is not None and ep.imagination and id(target) not in ep.imagined_targets and ep.allow_imagine:
+        from .imagination import build_request
+
+        b, d = target.relative_to(ep.pose)
+        req, pending = build_request(ep.id, target, b, d)
+        ep.imagined_targets.add(id(target))
+        ep.pending_imagination = pending
+        ep.imagining = True
+        ep.outbox.append(req)
+        ep.record("imagine_request", options=[o.label for o in req.options])
+        action = Action(move="none", duration_ms=600)
+        ep.apply(action)
+        return _decision(ep, action, f"Located {target.label} by sound (bearing {b:+.0f}°, ~{d:.0f} m). "
+                         "Imagining possible routes before moving.", t0, hazards=hazards,
+                         priority=f"reach {target.label}")
+
+    # 6) Steer toward the remembered survivor position (or a live continuous sound).
+    heard_out = (ep.memory.as_heard(ep.pose) + tracked_heard(ep, heard)) if ep.hearing else []
+    goal = None
+    if target is not None:
+        b, d = target.relative_to(ep.pose)
+        goal = Heard(bearing_deg=b, distance_m=d, label=target.label, urgency=min(3, max(1, target.urgency)))
+    elif ep.hearing:
+        goal = pursuit_target(tracked_heard(ep, heard))
+    action, steering = steer_toward(action, goal)
     reason = out.reason + (f" Steering: {steering}." if steering else "")
-    priority = (f"reach {target.label} ({target.bearing_deg:+.0f}°, ~{target.distance_m:.0f} m)"
-                if target else out.priority)
+    priority = (f"reach {goal.label} ({goal.bearing_deg:+.0f}°, ~{goal.distance_m:.0f} m)" if goal else out.priority)
     action, override = ep.safety.check(action, hazards,
                                        audio=audio_hazards(heard) if ep.hearing else None,
                                        heading_deg=ep.pose.heading_deg)
@@ -175,9 +264,9 @@ async def live_decision(ep: Episode, jpeg_b64: str) -> Decision:
             and hazard_ahead(hazards, min_severity=2) is None):
         action.duration_ms = min(MAX_FORWARD_MS, max(action.duration_ms, int(latency_ms * 0.9)))
 
-    for s in survivors:
-        if s.label not in ep.survivors_found:
-            ep.survivors_found.append(s.label)
+    for s_ in survivors:
+        if s_.label not in ep.survivors_found:
+            ep.survivors_found.append(s_.label)
     ep.recent.append(f"{action.move}/{action.look} {action.duration_ms}ms: {reason}"
                      + (f" [SAFETY OVERRIDE: {override}]" if override else ""))
     ep.apply(action)

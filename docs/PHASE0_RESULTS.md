@@ -60,3 +60,26 @@ Asset generation first hit the free tier's limit of **3 TTS requests/min**, and 
 - **Without a pursuit controller, the exit wins.** On the first try the agent turned toward the voice, then saw an open corridor with an exit and drove past the caller. Fix: the model decides *what* to pursue, and a small controller (`steer_toward`) keeps the heading on the tracked survivor sound whenever the model says "forward" but the sound is more than 25° off to the side. It never overrides the model's own turns, and the safety layer still runs after it.
 - **Audio only when needed:** a clip goes to ER 2 on a sound event (a new sound, or a voice going silent) or every 4th decision. In between, the agent gets text with each identified sound's current mic-array estimate.
 - **Stall risk:** one audio call hung for about 16 s. Timeouts are now 6 s for normal decisions and 9 s with audio.
+
+## Call-and-listen scenario + imagination (office_trapped_worker)
+
+The flow: the robot calls out "If you can hear me, call out!" → holds still and listens → the trapped worker answers **twice** (6 s, 17 s) and goes quiet; a **dog barks once** (11 s) from the other side → each finished sound is recorded **once** and classified by ER 2 → its position is **remembered on the map**, and two hearings are **triangulated** → the robot **imagines 3 routes** in forked worlds started from its current frame → ER 2 scores the imagined outcomes → the robot carries out the best one → reveal.
+
+Static-world run (2026-10-08):
+
+| t | event |
+|---|---|
+| 10 s | 1st call recorded → "human_distress", remembered at (−2.2, 4.6) |
+| 15–25 s | imagined: turn left toward the voice / straight on / turn right → chose **turn left** (progress 5/10, risk 2/10) |
+| 30–34 s | plan carried out in 3 steps of ~2 s |
+| 38 s | dog recorded → **"dog_or_animal"**, remembered but **not pursued** |
+| 41 s | 2nd call merged with the 1st → **triangulated** to (−2.9, 3.6); the true position is (−3.5, 3.5), so the error is about 0.7 m |
+| 46 s | **survivor located by sound** |
+
+Findings and fixes:
+- **ER 2 classifies a brief recording correctly**: dog 3/3 (with a real recording; my synthesized bark was heard as an "alarm"), distress voices, TV, tapping.
+- **TTS bug:** a prose style prefix ("Say this as a weak…: …") was **spoken aloud** in every voice clip. Fixed by using bracket audio tags (`[weak, exhausted] Help!`), retrying until a transcription contains only the line, and trimming silence. All clips were regenerated and checked.
+- A field-name clash in the event log silently dropped the only recordings, so recordings now go back in the queue if a model call fails. `tests/test_live_flow.py` covers listen → record → remember → imagine.
+- Plan steps wait for their move to finish (`busy_until`). The "turn toward the voice" maneuver turns by the remembered bearing, not a fixed 90°.
+
+**Still to do:** run in the real Reactor world with real imagination forks. That's blocked: the Reactor account ran out of credits (HTTP 402).
