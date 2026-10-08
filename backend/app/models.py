@@ -247,6 +247,21 @@ class DirectorEvent(BaseModel):
     source_id: Optional[str] = None
 
 
+class SoundEvent(BaseModel):
+    """A finished sound was classified and remembered (sent as soon as the utterance ends)."""
+    type: Literal["sound_event"] = "sound_event"
+    episode_id: str
+    ts: float
+    label: str
+    sound_type: str
+    bearing_deg: float
+    distance_m: float
+    observations: int
+    is_survivor: bool
+    reason: str
+    heard: list[Heard] = Field(default_factory=list)  # full remembered-sound list for the radar
+
+
 class EpisodeSummary(BaseModel):
     type: Literal["episode_summary"] = "episode_summary"
     episode_id: str

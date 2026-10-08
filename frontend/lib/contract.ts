@@ -84,6 +84,8 @@ export type ServerMessage =
   | { type: "audio_state"; episode_id: string; ts: number; pose: Pose; sources: AudioSourceState[] }
   | { type: "imagine_request"; episode_id: string; request_id: string; options: { id: string; label: string; world_prompt: string; drive: Action[] }[] }
   | { type: "imagine_verdict"; episode_id: string; request_id: string; scores: { id: string; risk: number; progress: number; summary: string }[]; chosen_id: string; reason: string }
+  | { type: "sound_event"; episode_id: string; ts: number; label: string; sound_type: string; bearing_deg: number;
+      distance_m: number; observations: number; is_survivor: boolean; reason: string; heard: Heard[] }
   | { type: "error"; message: string };
 
 export type ClientMessage =

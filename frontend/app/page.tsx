@@ -5,14 +5,16 @@ import { AudioRadar } from "@/components/AudioRadar";
 import { EpisodesPanel } from "@/components/EpisodesPanel";
 import { actionChip, friendlyOverride, HudOverlay } from "@/components/HudOverlay";
 import { ImaginationOverlay, type ImaginationView } from "@/components/ImaginationOverlay";
-import { runImagination } from "@/lib/imagine";
+import { prewarmForks, runImagination } from "@/lib/imagine";
 import { AudioScenePlayer, type AudioSourceState } from "@/lib/audioScene";
 import { BackendClient } from "@/lib/backend";
 import { BACKEND_HTTP, type Decision, type Heard, type Mode, type Pose, type Scenario, type ServerMessage } from "@/lib/contract";
 import { frameBlob, ReactorWorld, StaticWorld, type World } from "@/lib/world";
 
 const CALLOUT_URL = "/static/audio/voices/robot_callout.wav";
-const VERDICT_HOLD_MS = 4500;
+const VERDICT_HOLD_MS = 3000;
+const FORKS = 3;
+const MISSION_END_HOLD_MS = 4000;
 
 const FRAME_INTERVAL_MS = Number(process.env.NEXT_PUBLIC_FRAME_INTERVAL_MS ?? 500);
 type WorldKind = "static" | "reactor";
@@ -86,6 +88,8 @@ export default function MissionControl() {
   const imagining = useRef(false);
   const scenarioRef = useRef<Scenario | null>(null);
   const worldKindRef = useRef<WorldKind>("static");
+  const forkPool = useRef<World[]>([]);
+  const stopRef = useRef<((o: "rescued") => Promise<void>) | null>(null);
 
   useEffect(() => {
     fetch(`${BACKEND_HTTP}/scenarios`)
@@ -131,11 +135,13 @@ export default function MissionControl() {
     await main.pause();
     setImagineView({ requestId: req.request_id, options: req.options, status: {}, tiles: {} });
     if (!blob) return;
+    const pool = forkPool.current;
+    forkPool.current = [];
     const options = await runImagination(worldKindRef.current, blob, scenario.world_prompt, req.options, {
       onTile: (id, el) => setImagineView((v) => (v ? { ...v, tiles: { ...v.tiles, [id]: el } } : v)),
       onStatus: (id, st) => setImagineView((v) => (v ? { ...v, status: { ...v.status, [id]: st } } : v)),
       onFrames: (id, fr) => setImagineView((v) => (v ? { ...v, frames: { ...v.frames, [id]: fr } } : v)),
-    });
+    }, pool);
     backend.current?.send({ type: "imagine_results", episode_id: req.episode_id, request_id: req.request_id, options });
   }, []);
 
@@ -150,7 +156,12 @@ export default function MissionControl() {
       } else if (msg.type === "director_event" && msg.episode_id === episodeRef.current) {
         void world.current?.addEvent(msg.clause ?? msg.world_prompt);
         setBanner({ text: msg.caption, tone: msg.kind === "reveal" ? "found" : "danger" });
-        if (msg.kind === "reveal") setStats((st) => ({ ...st, survivors: st.survivors + 1 }));
+        if (msg.kind === "reveal") {
+          setStats((st) => ({ ...st, survivors: st.survivors + 1 }));
+          // Mission complete: hold the moment, then end the episode (keeps the demo under a minute).
+          const eid = msg.episode_id;
+          setTimeout(() => { if (episodeRef.current === eid) stopRef.current?.("rescued"); }, MISSION_END_HOLD_MS);
+        }
         setTimeout(() => setBanner(null), msg.kind === "reveal" ? 5000 : 4000);
       } else if (msg.type === "imagine_request" && msg.episode_id === episodeRef.current) {
         void imagine(msg);
@@ -163,6 +174,10 @@ export default function MissionControl() {
           await world.current?.resume();
           imagining.current = false;
         }, VERDICT_HOLD_MS);
+      } else if (msg.type === "sound_event" && msg.episode_id === episodeRef.current) {
+        setHeard(msg.heard);
+        const entry = { id: logId.current++, t: Date.now(), text: msg.reason, chip: "Heard" };
+        setLog((l) => [entry, ...l].slice(0, 200));
       } else if (msg.type === "episode_summary") {
         setEpisodesVersion((v) => v + 1);
       } else if (msg.type === "error") setError(msg.message);
@@ -229,6 +244,8 @@ export default function MissionControl() {
     setTruth([]);
     setHearingActive(hearing);
     setEpisodeId(started);
+    // Pre-warm the imagination forks so the "imagine" moment doesn't wait on Reactor session start.
+    if (worldKind === "reactor" && imagination && hearing) forkPool.current = prewarmForks(FORKS);
     if (hearing) void player.current.playOnce(CALLOUT_URL, 0.8); // "If you can hear me, call out!"
   }
 
@@ -237,9 +254,15 @@ export default function MissionControl() {
     episodeRef.current = null;
     setEpisodeId(null);
     player.current?.stopAll();
+    forkPool.current.forEach((w) => void w.stop()); // unused pre-warmed forks: disconnect (stops billing)
+    forkPool.current = [];
     await world.current?.stop();
     setWorldStatus("idle");
   }
+
+  useEffect(() => {
+    stopRef.current = (o) => stop(o);
+  });
 
   async function inject(preset: (typeof INJECT_PRESETS)[number]) {
     if (!episodeId) return;
@@ -374,7 +397,8 @@ export default function MissionControl() {
                   <summary className="flex cursor-pointer list-none items-start gap-2">
                     <span className="mt-0.5 w-14 shrink-0 font-mono text-[11px] text-muted">{new Date(e.t).toLocaleTimeString([], { hour12: false })}</span>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                      e.override ? "bg-surface text-hazard" : e.chip === "Hold" ? "bg-canvas text-muted" : "bg-tint text-primary-text"}`}>{e.chip}</span>
+                      e.override ? "bg-surface text-hazard" : e.chip === "Heard" ? "bg-sound-tint text-ink" : e.chip === "Hold" ? "bg-canvas text-muted" : "bg-tint text-primary-text"}`}>
+                      {e.chip === "Heard" && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-sound align-middle" />}{e.chip}</span>
                     <span className="min-w-0 text-ink">
                       {e.override ? <span className="text-hazard">{friendlyOverride(e.override)} </span> : null}
                       {e.text}

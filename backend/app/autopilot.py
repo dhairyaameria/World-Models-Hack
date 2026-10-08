@@ -65,6 +65,7 @@ def tracked_heard(ep: Episode, heard_est) -> list[Heard]:
 
 
 PURSUIT_CONE_DEG = 25
+FINAL_APPROACH_M = 4.0
 TURN_DPS = float(os.getenv("TURN_DPS", "60"))
 
 
@@ -127,7 +128,7 @@ def to_contract(out: DecisionOut) -> tuple[Action, list[PointLabel], list[Hazard
     return action, survivors, hazards, heard
 
 
-LISTEN_S = float(os.getenv("LISTEN_S", "22"))  # after the call-out, hold still this long listening
+LISTEN_S = float(os.getenv("LISTEN_S", "14"))  # after the call-out, hold still this long listening
 
 
 def _decision(ep: Episode, action: Action, reason: str, t0: float, **kw) -> Decision:
@@ -165,12 +166,13 @@ async def live_decision(ep: Episode, jpeg_b64: str) -> Decision:
                          t0, safety_override=override,
                          priority=f"reach {target.label}" if target else "explore")
 
-    capture = ep.audio.take_capture() if (ep.hearing and ep.audio) else None
+    capture = None  # finished utterances are classified by classify_capture() as soon as they end
     heard = ep.audio.hear(ep.pose) if ep.audio else []  # continuous sources (hiss, creak, water...)
 
     # 2) Call-and-listen: right after the call-out, hold still until something answers.
-    if (ep.hearing and capture is None and not ep.memory.items
-            and time.time() - ep.started_at < LISTEN_S):
+    still_processing = ep.classifying or bool(ep.audio and ep.audio.captures)
+    if (ep.hearing and not ep.memory.items
+            and (time.time() - ep.started_at < LISTEN_S or still_processing)):
         action = Action(move="none", duration_ms=600)
         ep.apply(action)
         return _decision(ep, action, "Called out to survivors; holding still and listening for a response.",
@@ -254,6 +256,12 @@ async def live_decision(ep: Episode, jpeg_b64: str) -> Decision:
     elif ep.hearing:
         goal = pursuit_target(tracked_heard(ep, heard))
     action, steering = steer_toward(action, goal)
+    if target is not None and goal is not None and goal.distance_m <= FINAL_APPROACH_M:
+        # Final approach: steer straight in on the located survivor (safety layer still applies).
+        if abs(goal.bearing_deg) <= PURSUIT_CONE_DEG:
+            action, steering = Action(move="W", duration_ms=1200), f"final approach to {goal.label} (~{goal.distance_m:.0f} m)"
+        else:
+            action, steering = steer_toward(Action(move="W", duration_ms=1200), goal)
     reason = out.reason + (f" Steering: {steering}." if steering else "")
     priority = (f"reach {goal.label} ({goal.bearing_deg:+.0f}°, ~{goal.distance_m:.0f} m)" if goal else out.priority)
     action, override = ep.safety.check(action, hazards,
@@ -276,3 +284,58 @@ async def live_decision(ep: Episode, jpeg_b64: str) -> Decision:
         heard=heard_out, priority=priority, exit_seen=out.exit_seen, pose=ep.pose,
         reason=reason, safety_override=override, source="cloud", latency_ms=latency_ms,
     )
+
+
+_BLANK_JPEG: bytes | None = None
+
+
+def _blank_jpeg() -> bytes:
+    global _BLANK_JPEG
+    if _BLANK_JPEG is None:
+        import io
+
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (64, 36), (40, 40, 40)).save(buf, "JPEG")
+        _BLANK_JPEG = buf.getvalue()
+    return _BLANK_JPEG
+
+
+TYPE_WORDS = {"human_distress": "a person calling for help", "child": "a child", "dog_or_animal": "an animal",
+              "tapping": "tapping", "human_speech_warning": "a spoken warning", "tv_or_radio": "a TV or radio",
+              "gas_hiss": "gas hissing", "structural_creak": "the structure creaking"}
+
+
+def classify_capture(ep: Episode, cap):
+    """Blocking: ER 2 classifies one finished utterance; it is remembered on the map.
+    Returns a SoundEvent (or None if ER 2 heard nothing usable)."""
+    from .models import SoundEvent
+
+    mic_text, b, d = capture_mic_text(ep, cap)
+    context = build_context(ep) + "\nThis step is ONLY about the recording: classify it and say where it came from."
+    out, _ = decide_sync(ep.last_jpeg or _blank_jpeg(), context, cap.wav, mic_text)
+    if not out.heard:
+        return None
+    o = min(out.heard, key=lambda h: _angle(h.bearing_deg, b))
+    r = ep.memory.add(cap.pose, cap.bearing_deg, cap.distance_m, o.sound_type, o.label,
+                      min(3, max(1, o.urgency)), time.time())
+    ep.record("sound_remembered", type=o.sound_type, label=o.label, position=r.position,
+              observations=len(r.observations))
+    log.info("remembered %s (%s) at %s from %d obs", o.label, o.sound_type,
+             tuple(round(v, 1) for v in r.position), len(r.observations))
+    rb, rd = r.relative_to(ep.pose)
+    what = TYPE_WORDS.get(o.sound_type, o.sound_type.replace("_", " "))
+    if r.is_survivor and len(r.observations) >= 2:
+        reason = f"Heard {what} again; triangulated them to ~{rd:.0f} m at {rb:+.0f}°."
+    elif r.is_survivor:
+        reason = f"Heard {what} at {rb:+.0f}°, ~{rd:.0f} m. Remembering where it came from."
+    elif o.sound_type == "dog_or_animal":
+        reason = f"Heard {what} at {rb:+.0f}°, ~{rd:.0f} m. Not a person; noting it for responders."
+    elif o.sound_type == "tv_or_radio":
+        reason = f"Heard {what} at {rb:+.0f}°. Likely a decoy; ignoring it."
+    else:
+        reason = f"Heard {what} at {rb:+.0f}°, ~{rd:.0f} m."
+    return SoundEvent(episode_id=ep.id, ts=time.time(), label=o.label, sound_type=o.sound_type,
+                      bearing_deg=round(rb), distance_m=round(rd, 1), observations=len(r.observations),
+                      is_survivor=r.is_survivor, reason=reason, heard=ep.memory.as_heard(ep.pose))

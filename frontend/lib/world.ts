@@ -79,7 +79,21 @@ export class ReactorWorld implements World {
     this.video.playsInline = true;
   }
 
-  async start(referenceImageUrl: string, prompt: string, events: string[] = []) {
+  /** Create + connect the session without starting generation. Lets imagination forks be
+   *  pre-warmed so they skip session creation / capacity waits when the robot needs them.
+   *  (Billing runs while connected, even before generation starts.) */
+  private connecting: Promise<void> | null = null;
+
+  /** Idempotent: concurrent callers (pre-warm + fork start) share one in-flight connection. */
+  connect(): Promise<void> {
+    this.connecting ??= this.doConnect().catch((e) => {
+      this.connecting = null;
+      throw e;
+    });
+    return this.connecting;
+  }
+
+  private async doConnect() {
     const model = new LingbotWorld2Model();
     this.model = model;
     model.on("statusChanged", (s) => this.onStatus?.(s));
@@ -97,11 +111,24 @@ export class ReactorWorld implements World {
         throw model.getLastError() ?? new Error("connect failed");
       } catch (e) {
         const msg = String((e as Error)?.message ?? e);
-        if (!/429|capacity/i.test(msg) || attempt >= 12) throw e;
+        if (!/429|capacity|rate/i.test(msg) || attempt >= 12) {
+          this.model = null;
+          throw e;
+        }
         this.onStatus?.(`no Reactor capacity, retrying (${attempt}/12)`);
         await new Promise((r) => setTimeout(r, 5000));
       }
     }
+  }
+
+  async start(referenceImageUrl: string, prompt: string, events: string[] = []) {
+    try {
+      await this.connect();
+    } catch {
+      this.connecting = null; // pre-warm failed: try once more from cold
+      await this.connect();
+    }
+    const model = this.model!;
     const blob = await (await fetch(referenceImageUrl)).blob();
     const ref = await model.uploadFile(blob, { name: "reference.jpg" });
     await model.setImage({ image: ref });
@@ -171,6 +198,7 @@ export class ReactorWorld implements World {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     const m = this.model;
     this.model = null;
+    this.connecting = null;
     if (m) {
       await m.reset().catch(() => {});
       await m.disconnect().catch(() => {});

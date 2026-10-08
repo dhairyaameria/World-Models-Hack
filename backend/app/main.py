@@ -43,7 +43,7 @@ from .state import Episode, EpisodeStore  # noqa: E402
 
 AGENT_MODE = os.getenv("AGENT_MODE", "mock")
 AUDIO_TICK_S = 0.25
-IMAGINE_TIMEOUT_S = float(os.getenv("IMAGINE_TIMEOUT_S", "75"))
+IMAGINE_TIMEOUT_S = float(os.getenv("IMAGINE_TIMEOUT_S", "45"))
 DECISION_MIN_INTERVAL_S = float(os.getenv("DECISION_MIN_INTERVAL_MS", "500")) / 1000
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -53,6 +53,8 @@ app = FastAPI(title="RescueSim backend")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
+    # e.g. https://.*\.vercel\.app to also allow Vercel preview deployments
+    allow_origin_regex=os.getenv("CORS_ORIGIN_REGEX") or None,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -138,6 +140,25 @@ class Connection:
             verdict = fallback_verdict(p, ep.id, "scoring failed")
         await self.finish_imagination(ep, verdict)
 
+    async def classify(self, ep: Episode) -> None:
+        """Classify finished utterances right away, in parallel with driving/imagining."""
+        from .autopilot import classify_capture
+
+        try:
+            while ep.audio.captures and ep.outcome is None:
+                cap = ep.audio.take_capture()
+                try:
+                    # no wait_for: a timed-out thread would still finish and remember the sound twice
+                    ev = await asyncio.to_thread(classify_capture, ep, cap)
+                except Exception as e:
+                    log.warning("sound classification failed: %s %s", type(e).__name__, str(e)[:200])
+                    ep.audio.captures.insert(0, cap)  # keep the only recording; retry on the next tick
+                    return
+                if ev is not None:
+                    await self.send(ev)
+        finally:
+            ep.classifying = False
+
     def start_audio(self, ep: Episode) -> None:
         if ep.audio is not None:
             self.tickers[ep.id] = asyncio.create_task(self._audio_tick(ep))
@@ -150,6 +171,9 @@ class Connection:
                 if ep.imagining and p is not None and time.time() - p.started > IMAGINE_TIMEOUT_S:
                     await self.finish_imagination(ep, fallback_verdict(p, ep.id, "timed out"))
                 ep.audio.tick(ep.pose)
+                if ep.hearing and ep.audio.captures and not ep.classifying:
+                    ep.classifying = True
+                    asyncio.create_task(self.classify(ep))
                 await self.send(AudioState(episode_id=ep.id, ts=time.time(), pose=ep.pose,
                                            sources=ep.audio.states(ep.pose)))
                 for src in ep.audio.due_reveals(ep.pose):

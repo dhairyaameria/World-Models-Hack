@@ -36,6 +36,8 @@ def test_listen_then_remember_then_imagine(monkeypatch):
     ep.audio.tick(ep.pose)
     assert ep.audio.captures, "the utterance should have been recorded"
 
+    ev = ap.classify_capture(ep, ep.audio.take_capture())
+    assert ev is not None and ev.is_survivor and "Remembering" in ev.reason
     d = asyncio.run(ap.live_decision(ep, JPEG))
     assert ep.memory.items and ep.memory.items[0].sound_type == "human_distress"
     assert ep.imagining and isinstance(ep.outbox[0], ImagineRequest)

@@ -88,6 +88,7 @@ class Episode:
     outbox: list = field(default_factory=list)  # messages for the frontend (imagine_request, ...)
     last_jpeg: Optional[bytes] = None
     busy_until: float = 0.0  # don't decide again until the current plan step has finished
+    classifying: bool = False
 
     def __post_init__(self) -> None:
         if self.audio is None:

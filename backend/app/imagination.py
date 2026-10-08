@@ -36,8 +36,9 @@ def _forward(n: int = 3) -> list[Action]:
     return [Action(move="W", duration_ms=1500) for _ in range(n)]
 
 
-def candidate_maneuvers(target_bearing: float) -> list[Maneuver]:
-    """Three options: toward the remembered sound, straight on, and away from it."""
+def candidate_maneuvers(target_bearing: float, target_distance: float = 6.0) -> list[Maneuver]:
+    """Three options: toward the remembered sound, straight on, and away from it.
+    The 'toward' option drives far enough to reach the remembered spot (1.5 m per step, max 4)."""
     toward = "left" if target_bearing < 0 else "right"
     away = "right" if toward == "left" else "left"
     # turn just far enough to face the remembered sound (not a fixed 90°)
@@ -45,9 +46,11 @@ def candidate_maneuvers(target_bearing: float) -> list[Maneuver]:
     return [
         Maneuver(f"turn_{toward}", f"Turn {toward} toward the voice",
                  f"The robot turns {toward} and rolls through the opening on the {toward} into the next room.",
-                 [Action(look=toward, duration_ms=turn_ms), *_forward(2)]),
+                 [Action(look=toward, duration_ms=turn_ms),
+                  *_forward(int(min(4, max(1, round((target_distance - 1.5) / 1.5)))))]),
         Maneuver("forward", "Continue straight ahead",
-                 "The robot keeps rolling straight ahead down the corridor.", _forward(3)),
+                 "The robot keeps rolling straight ahead down the corridor, closer and closer to whatever lies ahead.",
+                 _forward(2)),
         Maneuver(f"turn_{away}", f"Turn {away}, away from the voice",
                  f"The robot turns {away} and rolls forward toward the {away}-hand side.",
                  [Action(look=away, duration_ms=TURN_90_MS), *_forward(2)]),
@@ -66,7 +69,7 @@ class PendingImagination:
 
 def build_request(episode_id: str, target: Remembered, bearing: float, distance: float
                   ) -> tuple[ImagineRequest, PendingImagination]:
-    mans = candidate_maneuvers(bearing)
+    mans = candidate_maneuvers(bearing, distance)
     rid = uuid.uuid4().hex[:8]
     req = ImagineRequest(episode_id=episode_id, request_id=rid, options=[
         ImagineOption(id=m.id, label=m.label, world_prompt=m.clause, drive=m.drive) for m in mans])

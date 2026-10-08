@@ -24,8 +24,8 @@ export interface ImagineCallbacks {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function runFork(kind: "reactor" | "static", referenceUrl: string, base: string, opt: ImagineOption,
-                       cb: ImagineCallbacks): Promise<string[]> {
-  const w: World = kind === "reactor" ? new ReactorWorld() : new StaticWorld();
+                       cb: ImagineCallbacks, prewarmed?: World): Promise<string[]> {
+  const w: World = prewarmed ?? (kind === "reactor" ? new ReactorWorld() : new StaticWorld());
   w.video.className = "h-full w-full object-cover";
   cb.onTile(opt.id, w.video);
   cb.onStatus(opt.id, "starting");
@@ -33,18 +33,18 @@ async function runFork(kind: "reactor" | "static", referenceUrl: string, base: s
   try {
     await w.start(referenceUrl, base, [opt.world_prompt]);
     if (!(await w.ready(35000))) throw new Error("no video");
-    await sleep(500);
+    await sleep(300);
     cb.onStatus(opt.id, "simulating");
     for (const a of opt.drive) {
       w.sendAction(a);
-      await sleep(a.duration_ms + 300);
+      await sleep(a.duration_ms + 200);
       const f = w.captureFrame(640, 0.8);
       if (f) {
         frames.push(f);
         cb.onFrames?.(opt.id, [...frames]);
       }
     }
-    await sleep(900); // let the last chunk land
+    await sleep(700); // let the last chunk land
     const last = w.captureFrame(640, 0.8);
     if (last) frames.push(last);
     cb.onFrames?.(opt.id, [...frames]);
@@ -59,12 +59,21 @@ async function runFork(kind: "reactor" | "static", referenceUrl: string, base: s
 }
 
 export async function runImagination(kind: "reactor" | "static", frame: Blob, base: string,
-                                     options: ImagineOption[], cb: ImagineCallbacks) {
+                                     options: ImagineOption[], cb: ImagineCallbacks, pool: World[] = []) {
   const url = URL.createObjectURL(frame);
   try {
-    const results = await Promise.all(options.map((o) => runFork(kind, url, base, o, cb)));
+    const results = await Promise.all(options.map((o, i) => runFork(kind, url, base, o, cb, pool[i])));
     return options.map((o, i) => ({ id: o.id, label: o.label, frames_b64: results[i] }));
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
+}
+
+/** Connect imagination fork sessions ahead of time (Reactor only). Staggered to respect the
+ *  new-session burst limit; failures are ignored (a fork then starts cold). */
+export function prewarmForks(n: number): ReactorWorld[] {
+  const pool = Array.from({ length: n }, () => new ReactorWorld());
+  // Reactor allows ~3 new sessions in a burst (10/min): space them out after the main session.
+  pool.forEach((w, i) => setTimeout(() => void w.connect().catch(() => {}), 3500 * (i + 1)));
+  return pool;
 }

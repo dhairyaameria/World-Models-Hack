@@ -11,27 +11,29 @@ PRESETS: list[Scenario] = [
         id="office_trapped_worker",
         title="Earthquake: Trapped Worker",
         description="Office corridor after an earthquake. Someone may be trapped in one of the side "
-        "offices. Call out, listen, locate them by sound, and reach them safely.",
+        "offices. The corridor ahead is blocked by a collapsed ceiling with live, sparking cables. Call "
+        "out, listen, locate them by sound, and reach them safely.",
         world_prompt=(
             "A dusty office corridor after an earthquake. The world contains EXACTLY ONE open office "
-            "doorway on the left wall a few meters ahead at a fixed position AND EXACTLY ONE green glowing "
-            "exit sign at the far end of the corridor at a fixed position AND EXACTLY ONE fallen ceiling "
-            "panel on the floor on the right at a fixed position. Through the doorway: a side office with "
-            "desks and a toppled bookshelf. Scattered papers, hanging cables, grey dust, cold flickering "
-            "light. Gritty, realistic."
+            "doorway on the left wall a few meters ahead at a fixed position AND EXACTLY ONE collapsed "
+            "ceiling section hanging low across the middle of the corridor further ahead, with live electric "
+            "cables dangling from it and throwing bright sparks, at a fixed position AND EXACTLY ONE green "
+            "glowing exit sign at the far end beyond it at a fixed position. Through the doorway: a side "
+            "office with desks and a toppled bookshelf. Grey dust, scattered papers. Gritty, realistic."
         ),
         reference_image_url="/static/scenarios/office_trapped_worker.jpg",
         audio_sources=[
             AudioSource(
                 id="trapped_worker",
                 kind="voice",
-                position=(-3.5, 3.5),  # inside the side office, through the left doorway (~-45°, 5 m)
+                position=(-4.0, 4.5),  # inside the side office, through the left doorway (~-42°, 6 m)
                 clip_url="/static/audio/voices/help_im_stuck_weak.wav",
-                plays=[Play(at_s=6), Play(at_s=17, clip_url="/static/audio/voices/please_im_in_here.wav")],
+                # demo timing: answers right after the ~4.4 s call-out, again after the dog
+                plays=[Play(at_s=5), Play(at_s=13, clip_url="/static/audio/voices/please_im_in_here.wav")],
                 transcript="Help! I'm stuck under here! ... Please... I'm in here... I can't move my leg.",
                 urgency=3,
                 reveal=Reveal(
-                    radius_m=4.0,
+                    radius_m=2.5,
                     world_prompt="Inside the side office, a dust-covered office worker lies trapped under "
                     "the toppled bookshelf, raising one arm toward the camera.",
                     caption="Office worker trapped under a bookshelf",
@@ -42,7 +44,7 @@ PRESETS: list[Scenario] = [
                 kind="dog",
                 position=(5.0, 9.0),
                 clip_url="/static/audio/fx/dog_bark.wav",
-                plays=[Play(at_s=11)],
+                plays=[Play(at_s=9.5)],
             ),
         ],
     ),
