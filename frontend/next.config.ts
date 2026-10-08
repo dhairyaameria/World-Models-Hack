@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  devIndicators: false, // the dev badge sits where the audio radar goes
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

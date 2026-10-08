@@ -104,7 +104,7 @@ export function HudOverlay({ decision, receivedAt, trail, stats }: Props) {
       )}
 
       {decision && (
-        <div className="absolute bottom-4 left-1/2 flex max-w-[80%] -translate-x-1/2 items-center gap-3 rounded bg-black/70 px-4 py-2 text-white">
+        <div className="absolute bottom-4 left-1/2 flex max-w-[52%] -translate-x-1/2 items-center gap-3 rounded bg-black/70 px-4 py-2 text-white">
           <span className="text-3xl">{glyph}</span>
           <div>
             <div className="text-lg leading-tight">{decision.reason}</div>

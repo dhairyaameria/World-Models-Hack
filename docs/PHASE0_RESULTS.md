@@ -52,3 +52,11 @@ Asset generation first hit the free tier's limit of **3 TTS requests/min**, and 
 - **Drift:** layered prompts from Reactor's prompt guide (`frontend/lib/prompts.ts`) keep the robot's chassis and treads in frame and the scene more stable, but over about a minute the world still drifts. That's a limit of the model, not of our prompts, so keep demo runs short (under about 60 s per scenario) or restart the session.
 - **World events:** the agent now gets an "ALERT" line in its context for 20 s after a disaster event, and it treats dense dust or smoke that hides the floor as a severity-2 hazard. Before this change, it drove straight into the dust cloud from an aftershock.
 - **Forward moves are capped at 1.5 s.** At 2.5 s the robot acted on stale frames and walked into a wall.
+
+## P16/P17: hearing, first live runs
+
+- **Static world:** injected a muffled cry behind-left. The agent turned toward it within about 2 s, corrected its course as the estimates updated, and **located the survivor by sound at 33 s**.
+- **Reactor world:** **located the scenario's trapped caller by sound at 61 s**, steering around a chair and hanging wires on the way.
+- **Without a pursuit controller, the exit wins.** On the first try the agent turned toward the voice, then saw an open corridor with an exit and drove past the caller. Fix: the model decides *what* to pursue, and a small controller (`steer_toward`) keeps the heading on the tracked survivor sound whenever the model says "forward" but the sound is more than 25° off to the side. It never overrides the model's own turns, and the safety layer still runs after it.
+- **Audio only when needed:** a clip goes to ER 2 on a sound event (a new sound, or a voice going silent) or every 4th decision. In between, the agent gets text with each identified sound's current mic-array estimate.
+- **Stall risk:** one audio call hung for about 16 s. Timeouts are now 6 s for normal decisions and 9 s with audio.

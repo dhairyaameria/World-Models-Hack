@@ -83,13 +83,14 @@ Backend -> Frontend
      latency_ms:number}
   {type:"audio_state", episode_id, ts,         // ~4 Hz, drives speakers + radar
      pose:{x,y,heading_deg},
-     sources:[{id, bearing_deg, distance_m, gain:number(0-1), muffled:boolean, playing:boolean}]}
+     sources:[{id, kind, clip_url, bearing_deg, distance_m, gain:number(0-1), muffled:boolean, playing:boolean}]}
   {type:"imagine_request", episode_id, request_id,
      options:[{id, label, world_prompt:string, drive:{move,look,duration_ms}[]}]}
   {type:"imagine_verdict", episode_id, request_id,
      scores:[{id, risk:0-10, progress:0-10, summary:string}], chosen_id:string, reason:string}
   {type:"director_event", episode_id, kind:"director"|"trap"|"reveal",
-     world_prompt:string, caption:string, source_id?:string}
+     world_prompt:string, clause?:string,       // clause = sentence to append to the base prompt
+     caption:string, source_id?:string}
   {type:"episode_summary", episode_id, score:number, outcome, lessons:string[]}
   {type:"error", message:string}               // invalid message / unknown episode
 
@@ -99,7 +100,8 @@ HTTP
   GET  /episodes                 -> [{episode_id, scenario_id, agent, score, outcome, lessons_count}]
   POST /live/token               -> {token, model, expires_at}   // Gemini Live ephemeral token
   POST /director/trigger         {episode_ids:string[], event?:string}  // same event to all
-  POST /audio/trigger            {episode_ids:string[], source:<audio source>}  // inject a sound now
+  POST /audio/trigger            {episode_ids:string[], source:<audio source>,
+                                  bearing_deg?, distance_m?}  // inject now; optional placement relative to robot
   GET  /models                   -> [{name, trained_on_scenarios, n_frames, created_at}]
   GET  /experiments/results      -> ablation table + chart data (see P13)
   GET  /health

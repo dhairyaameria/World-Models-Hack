@@ -3,6 +3,7 @@ override it. No model can bypass these rules."""
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
@@ -13,6 +14,10 @@ from .models import Action, Hazard
 AHEAD_Y_MIN = 600
 AHEAD_X_MIN, AHEAD_X_MAX = 300, 700
 OSCILLATION_WINDOW = 6
+# Hearing rules (P16)
+AUDIO_HAZARD_CONE_DEG = 30
+AUDIO_HAZARD_RANGE_M = 6.0
+WARNING_MEMORY_S = 60
 
 
 def hazard_ahead(hazards: list[Hazard], min_severity: int = 3) -> Optional[Hazard]:
@@ -24,12 +29,45 @@ def hazard_ahead(hazards: list[Hazard], min_severity: int = 3) -> Optional[Hazar
 
 
 @dataclass
+class AudioHazard:
+    """A hazard the robot heard. `label` comes from the onboard sound classifier (in this sim: the
+    source kind), bearing/distance from the mic array (noisy estimates)."""
+    label: str
+    bearing_deg: float
+    distance_m: float
+    is_warning: bool = False  # a spoken "don't come this way"
+
+
+@dataclass
 class SafetyLayer:
     recent_turns: deque = field(default_factory=lambda: deque(maxlen=OSCILLATION_WINDOW))
-    _force_forward_next: bool = False
+    # absolute headings someone warned us away from: (time, heading_deg)
+    warned_headings: list = field(default_factory=list)
 
-    def check(self, action: Action, hazards: list[Hazard]) -> tuple[Action, Optional[str]]:
+    def check(self, action: Action, hazards: list[Hazard], audio: Optional[list[AudioHazard]] = None,
+              heading_deg: float = 0.0) -> tuple[Action, Optional[str]]:
         """Return (possibly replaced action, override reason or None)."""
+        now = time.time()
+        for a in audio or []:
+            if a.is_warning:
+                self.warned_headings.append((now, heading_deg + a.bearing_deg))
+        self.warned_headings = [(t, h) for t, h in self.warned_headings if now - t < WARNING_MEMORY_S]
+
+        if action.move == "W":
+            # Rule A1: invisible hazard heard ahead (gas hiss, creaking structure) -> don't advance.
+            for a in audio or []:
+                if (not a.is_warning and abs(a.bearing_deg) <= AUDIO_HAZARD_CONE_DEG
+                        and a.distance_m <= AUDIO_HAZARD_RANGE_M):
+                    self.recent_turns.clear()
+                    side = "right" if a.bearing_deg <= 0 else "left"
+                    return (Action(look=side, duration_ms=900),
+                            f"invisible hazard ahead (audio: {a.label})")
+            # Rule A2: someone warned us away from this direction in the last minute.
+            for _, h in self.warned_headings:
+                if abs(((heading_deg - h) + 180) % 360 - 180) <= AUDIO_HAZARD_CONE_DEG:
+                    self.recent_turns.clear()
+                    return (Action(look="right", duration_ms=900),
+                            "warned away from this direction (audio)")
         # Rule 1: never drive forward into a deadly hazard directly ahead.
         h = hazard_ahead(hazards)
         if h is not None and action.move == "W":

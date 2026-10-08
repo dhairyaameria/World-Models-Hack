@@ -14,6 +14,15 @@ from app.state import integrate  # noqa: E402
 
 client = TestClient(app)
 
+
+def recv(ws, type_):
+    """Next message of the given type (audio_state ticks are interleaved)."""
+    for _ in range(200):
+        msg = json.loads(ws.receive_text())
+        if msg["type"] == type_:
+            return msg
+    raise AssertionError(f"no {type_} message")
+
 TINY_JPEG_B64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
 
 
@@ -28,19 +37,20 @@ def test_episode_frame_decision_end():
         ws.send_text(json.dumps({"type": "start_episode", "scenario_id": "earthquake_office",
                                  "mode": "autopilot", "agent": "cloud",
                                  "imagination": False, "hearing": False}))
-        started = json.loads(ws.receive_text())
+        started = recv(ws, "episode_started")
         assert started["type"] == "episode_started"
         eid = started["episode_id"]
 
         ws.send_text(json.dumps({"type": "frame", "episode_id": eid, "ts": 0,
                                  "jpeg_b64": TINY_JPEG_B64}))
-        decision = json.loads(ws.receive_text())
+        decision = recv(ws, "decision")
         assert decision["type"] == "decision"
         assert decision["action"]["move"] in {"W", "A", "S", "D", "none"}
         assert set(decision["pose"]) == {"x", "y", "heading_deg"}
 
+        assert recv(ws, "audio_state")["sources"]
         ws.send_text(json.dumps({"type": "end_episode", "episode_id": eid, "outcome": "timeout"}))
-        summary = json.loads(ws.receive_text())
+        summary = recv(ws, "episode_summary")
         assert summary["type"] == "episode_summary"
 
 

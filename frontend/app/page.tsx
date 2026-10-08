@@ -1,14 +1,38 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AudioRadar } from "@/components/AudioRadar";
 import { HudOverlay } from "@/components/HudOverlay";
+import { AudioScenePlayer, type AudioSourceState } from "@/lib/audioScene";
 import { BackendClient } from "@/lib/backend";
-import { BACKEND_HTTP, type Decision, type Mode, type Pose, type Scenario } from "@/lib/contract";
+import { BACKEND_HTTP, type Decision, type Heard, type Mode, type Pose, type Scenario } from "@/lib/contract";
 import { ReactorWorld, StaticWorld, type World } from "@/lib/world";
 
 const FRAME_INTERVAL_MS = Number(process.env.NEXT_PUBLIC_FRAME_INTERVAL_MS ?? 500);
 type WorldKind = "static" | "reactor";
 type LogEntry = { id: number; t: number; text: string; override?: string | null; thumb?: string | null };
+type Banner = { text: string; tone: "danger" | "found" };
+
+// Operator palette: inject a sound relative to the robot's current pose (POST /audio/trigger).
+const INJECT_PRESETS = [
+  { label: "🗣 Cry for help · behind-left", bearing: -130, distance: 7, source: {
+    kind: "voice", clip_url: "/static/audio/voices/help_im_stuck_weak.wav", muffled: true, urgency: 3,
+    reveal: { radius_m: 3, world_prompt: "A dust-covered person lies trapped under a collapsed desk, waving one arm toward the camera.", caption: "Survivor trapped under debris" } } },
+  { label: "🧒 Child crying · right", bearing: 100, distance: 9, source: {
+    kind: "voice", clip_url: "/static/audio/voices/is_anyone_there_child.wav", urgency: 3,
+    reveal: { radius_m: 3, world_prompt: "A frightened child crouches beside an overturned cabinet, looking at the camera.", caption: "Child found" } } },
+  { label: "💨 Gas hiss · ahead", bearing: 8, distance: 4, source: {
+    kind: "gas_hiss", clip_url: "/static/audio/fx/gas_hiss.wav", is_hazard: true, severity: 3 } },
+  { label: "🏚 Creaking · overhead", bearing: 0, distance: 3, source: {
+    kind: "creak", clip_url: "/static/audio/fx/creak.wav", is_hazard: true, severity: 3, stop_s: 25 } },
+  { label: "⚠️ \"Don't come this way!\"", bearing: 5, distance: 10, source: {
+    kind: "voice", clip_url: "/static/audio/voices/dont_come_this_way.wav", is_hazard: true, loop: false } },
+  { label: "🔨 SOS tapping · behind-right", bearing: 140, distance: 7, source: {
+    kind: "tapping", clip_url: "/static/audio/fx/sos_knock.wav", muffled: true, urgency: 3,
+    reveal: { radius_m: 3, world_prompt: "A worker pinned behind fallen boxes knocks on a metal shelf with a wrench.", caption: "Survivor found by tapping" } } },
+  { label: "📺 TV voice (decoy) · left", bearing: -70, distance: 6, source: {
+    kind: "tv_radio", clip_url: "/static/audio/voices/tv_news_decoy.wav", is_decoy: true } },
+] as const;
 
 export default function MissionControl() {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -26,7 +50,11 @@ export default function MissionControl() {
   const [receivedAt, setReceivedAt] = useState(0);
   const [trail, setTrail] = useState<Pose[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
-  const [banner, setBanner] = useState<string | null>(null);
+  const [banner, setBanner] = useState<Banner | null>(null);
+  const [truth, setTruth] = useState<AudioSourceState[]>([]);
+  const [heard, setHeard] = useState<Heard[]>([]);
+  const [showTruth, setShowTruth] = useState(false);
+  const [hearingActive, setHearingActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState({ steps: 0, survivors: 0, hazardsAvoided: 0, elapsedS: 0 });
   const [tab, setTab] = useState<"log" | "imagination" | "episodes">("log");
@@ -38,6 +66,8 @@ export default function MissionControl() {
   const startedAt = useRef(0);
   const lastThumb = useRef<string | null>(null);
   const logId = useRef(0);
+  const player = useRef<AudioScenePlayer | null>(null);
+  const injectId = useRef(0);
 
   useEffect(() => {
     fetch(`${BACKEND_HTTP}/scenarios`)
@@ -61,6 +91,7 @@ export default function MissionControl() {
     setDecision(d);
     setReceivedAt(performance.now());
     setTrail((t) => [...t.slice(-500), d.pose]);
+    setHeard(d.heard);
     setStats((s) => ({
       ...s,
       steps: s.steps + 1,
@@ -76,10 +107,14 @@ export default function MissionControl() {
     if (!client) return;
     return client.subscribe((msg) => {
       if (msg.type === "decision") handleDecision(msg);
-      else if (msg.type === "director_event" && msg.episode_id === episodeRef.current) {
+      else if (msg.type === "audio_state" && msg.episode_id === episodeRef.current) {
+        player.current?.update(msg.sources);
+        setTruth(msg.sources);
+      } else if (msg.type === "director_event" && msg.episode_id === episodeRef.current) {
         void world.current?.addEvent(msg.clause ?? msg.world_prompt);
-        setBanner(msg.caption);
-        setTimeout(() => setBanner(null), 4000);
+        setBanner({ text: msg.caption, tone: msg.kind === "reveal" ? "found" : "danger" });
+        if (msg.kind === "reveal") setStats((st) => ({ ...st, survivors: st.survivors + 1 }));
+        setTimeout(() => setBanner(null), msg.kind === "reveal" ? 5000 : 4000);
       } else if (msg.type === "error") setError(msg.message);
     });
   }, [handleDecision, connected]);
@@ -102,6 +137,8 @@ export default function MissionControl() {
     const client = backend.current;
     if (!scenario || !client) return;
     setError(null);
+    player.current ??= new AudioScenePlayer();
+    player.current.unlock(); // inside the click handler, so the browser allows audio
 
     const w: World = worldKind === "reactor" ? new ReactorWorld() : new StaticWorld();
     w.onStatus = setWorldStatus;
@@ -130,6 +167,9 @@ export default function MissionControl() {
     setTrail([{ x: 0, y: 0, heading_deg: 0 }]);
     setLog([]);
     setDecision(null);
+    setHeard([]);
+    setTruth([]);
+    setHearingActive(hearing);
     setEpisodeId(started);
   }
 
@@ -137,8 +177,23 @@ export default function MissionControl() {
     if (episodeId) backend.current?.send({ type: "end_episode", episode_id: episodeId, outcome });
     episodeRef.current = null;
     setEpisodeId(null);
+    player.current?.stopAll();
     await world.current?.stop();
     setWorldStatus("idle");
+  }
+
+  async function inject(preset: (typeof INJECT_PRESETS)[number]) {
+    if (!episodeId) return;
+    await fetch(`${BACKEND_HTTP}/audio/trigger`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        episode_ids: [episodeId],
+        bearing_deg: preset.bearing,
+        distance_m: preset.distance,
+        source: { id: `inj_${preset.source.kind}_${injectId.current++}`, position: [0, 0], ...preset.source },
+      }),
+    });
   }
 
   async function triggerEvent() {
@@ -200,9 +255,11 @@ export default function MissionControl() {
             </div>
           )}
           {running && <HudOverlay decision={decision} receivedAt={receivedAt} trail={trail} stats={stats} />}
+          {running && <AudioRadar heard={heard} truth={truth} showTruth={showTruth} hearingOn={hearingActive} />}
           {banner && (
-            <div className="absolute left-0 right-0 top-1/3 bg-red-700/90 py-3 text-center text-2xl font-bold tracking-wide">
-              ⚠ {banner}
+            <div className={`absolute left-0 right-0 top-1/3 py-3 text-center text-2xl font-bold tracking-wide ${
+              banner.tone === "found" ? "bg-green-700/90" : "bg-red-700/90"}`}>
+              {banner.tone === "found" ? "🗣 " : "⚠ "}{banner.text}
             </div>
           )}
         </section>
@@ -216,6 +273,23 @@ export default function MissionControl() {
               </button>
             ))}
           </nav>
+          {running && (
+            <div className="border-b border-slate-800 p-2">
+              <div className="mb-1 flex items-center justify-between text-xs uppercase tracking-wide text-slate-400">
+                <span>Inject sound</span>
+                <label className="flex items-center gap-1 normal-case">
+                  <input type="checkbox" checked={showTruth} onChange={(e) => setShowTruth(e.target.checked)} />
+                  show true positions
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {INJECT_PRESETS.map((p) => (
+                  <button key={p.label} onClick={() => inject(p)}
+                    className="rounded bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700">{p.label}</button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto p-3 text-sm">
             {tab === "log" && (log.length === 0
               ? <p className="text-slate-500">Decisions appear here.</p>

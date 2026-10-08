@@ -180,6 +180,8 @@ class Decision(BaseModel):
 
 class AudioSourceState(BaseModel):
     id: str
+    kind: SoundKind
+    clip_url: str
     bearing_deg: float
     distance_m: float
     gain: float
@@ -258,6 +260,9 @@ class DirectorTrigger(BaseModel):
 class AudioTrigger(BaseModel):
     episode_ids: list[str]
     source: AudioSource
+    # If set, place the source relative to each robot's current pose instead of source.position.
+    bearing_deg: Optional[float] = None
+    distance_m: Optional[float] = None
 
 
 class GenerateScenario(BaseModel):

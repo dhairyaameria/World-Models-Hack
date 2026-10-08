@@ -1,5 +1,7 @@
 // TypeScript mirror of shared/contract.md. Keep in sync with backend/app/models.py.
 
+import type { AudioSourceState } from "./audioScene";
+
 export type Move = "W" | "A" | "S" | "D" | "none";
 export type Look = "left" | "right" | "up" | "down" | "none";
 export type AgentName = "cloud" | "onboard" | "baseline";
@@ -79,7 +81,7 @@ export type ServerMessage =
   | Decision
   | { type: "director_event"; episode_id: string; kind: "director" | "trap" | "reveal"; world_prompt: string; clause?: string; caption: string; source_id?: string | null }
   | { type: "episode_summary"; episode_id: string; score: number; outcome: Outcome; lessons: string[] }
-  | { type: "audio_state"; episode_id: string; ts: number; pose: Pose; sources: unknown[] }
+  | { type: "audio_state"; episode_id: string; ts: number; pose: Pose; sources: AudioSourceState[] }
   | { type: "imagine_request"; episode_id: string; request_id: string; options: unknown[] }
   | { type: "imagine_verdict"; episode_id: string; request_id: string; scores: unknown[]; chosen_id: string; reason: string }
   | { type: "error"; message: string };

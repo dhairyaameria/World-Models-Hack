@@ -19,7 +19,9 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from .autopilot import live_decision  # noqa: E402
 from .mock_agent import mock_decision  # noqa: E402
+from .audio_engine import position_from  # noqa: E402
 from .models import (  # noqa: E402
+    AudioState,
     AudioTrigger,
     ClientEnvelope,
     DirectorEvent,
@@ -38,6 +40,7 @@ from .scenarios import get_scenario, get_scenarios  # noqa: E402
 from .state import Episode, EpisodeStore  # noqa: E402
 
 AGENT_MODE = os.getenv("AGENT_MODE", "mock")
+AUDIO_TICK_S = 0.25
 DECISION_MIN_INTERVAL_S = float(os.getenv("DECISION_MIN_INTERVAL_MS", "500")) / 1000
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -64,6 +67,7 @@ class Connection:
         self.send_lock = asyncio.Lock()
         self.pending: dict[str, Frame] = {}
         self.workers: dict[str, asyncio.Task] = {}
+        self.tickers: dict[str, asyncio.Task] = {}
         self.offline = False
 
     async def send(self, msg: BaseModel) -> None:
@@ -99,8 +103,31 @@ class Connection:
                      decision.action.move, decision.action.look, decision.latency_ms)
             await self.send(decision)
 
+    def start_audio(self, ep: Episode) -> None:
+        if ep.audio is not None:
+            self.tickers[ep.id] = asyncio.create_task(self._audio_tick(ep))
+
+    async def _audio_tick(self, ep: Episode) -> None:
+        """Ground-truth audio for speakers/radar at ~4 Hz, plus reveals when the robot arrives."""
+        while ep.outcome is None:
+            try:
+                await self.send(AudioState(episode_id=ep.id, ts=time.time(), pose=ep.pose,
+                                           sources=ep.audio.states(ep.pose)))
+                for src in ep.audio.due_reveals(ep.pose):
+                    ep.survivors_found.append(src.reveal.caption)
+                    ep.record("reveal", source_id=src.id, caption=src.reveal.caption)
+                    log.info("reveal ep=%s source=%s", ep.id, src.id)
+                    await self.send(DirectorEvent(
+                        episode_id=ep.id, kind="reveal", source_id=src.id, clause=src.reveal.world_prompt,
+                        world_prompt=f"{ep.scenario.world_prompt} {src.reveal.world_prompt}",
+                        caption=f"SURVIVOR LOCATED BY SOUND: {src.reveal.caption}"))
+            except Exception:
+                log.exception("audio tick failed for %s", ep.id)
+                return
+            await asyncio.sleep(AUDIO_TICK_S)
+
     def cancel(self) -> None:
-        for t in self.workers.values():
+        for t in [*self.workers.values(), *self.tickers.values()]:
             t.cancel()
 
 
@@ -164,6 +191,7 @@ async def handle(conn: Connection, msg: Any) -> None:
         log.info("episode %s started scenario=%s mode=%s agent=%s", ep.id, scenario.id,
                  msg.mode, msg.agent)
         await conn.send(EpisodeStarted(episode_id=ep.id, scenario=scenario))
+        conn.start_audio(ep)
     elif isinstance(msg, Frame):
         if store.get(msg.episode_id) is None:
             await conn.send(ErrorMessage(message=f"unknown episode {msg.episode_id}"))
@@ -230,7 +258,16 @@ async def director_trigger(body: DirectorTrigger) -> dict[str, Any]:
 
 @app.post("/audio/trigger")
 async def audio_trigger(body: AudioTrigger) -> dict[str, Any]:
-    raise HTTPException(501, "audio engine not implemented yet (P16)")
+    placed = {}
+    for eid in body.episode_ids:
+        ep = _require(eid)
+        src = body.source
+        if body.bearing_deg is not None and body.distance_m is not None:
+            src = src.model_copy(update={"position": position_from(ep.pose, body.bearing_deg, body.distance_m)})
+        ep.audio.inject(src)
+        ep.record("audio_inject", source=src.model_dump())
+        placed[eid] = src.position
+    return {"ok": True, "placed": placed}
 
 
 @app.post("/live/token")

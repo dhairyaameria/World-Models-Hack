@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .models import Action, AgentName, Mode, Pose, Scenario
+from .audio_engine import AudioScene
 from .safety import SafetyLayer
 
 # Calibrate these against Reactor (P3): how far one second of W moves, how fast "look" turns.
@@ -70,6 +71,14 @@ class Episode:
     survivors_found: list[str] = field(default_factory=list)
     playbook: list[str] = field(default_factory=list)
     events: list[tuple[float, str]] = field(default_factory=list)  # (time, clause) of world events
+    audio: Optional[AudioScene] = None
+    decisions_since_audio: int = 0
+    # source_id -> what the model said it is (label, is_hazard, is_decoy_suspected, urgency)
+    heard_labels: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.audio is None:
+            self.audio = AudioScene(sources=list(self.scenario.audio_sources), seed=hash(self.id) % 2**32)
 
     def apply(self, action: Action) -> None:
         self.pose = integrate(self.pose, action)

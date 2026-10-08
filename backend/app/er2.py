@@ -32,6 +32,8 @@ under debris; a voice that goes silent raises urgency; spoken warnings ("don't c
 hazard information for that direction; hissing, creaking or rushing water are hazards you may not
 see; TV/radio-like or repeating broadcast voices may be decoys. When survivors compete, prioritize by
 urgency, then whether they can be reached safely, then distance.
+A survivor you can hear outranks the exit: go to them first, even if the exit is visible and the
+voice comes from the side or behind you. Turn toward the sound before moving.
 Image points are [y, x] normalized to 0-1000. Bearings: 0 = straight ahead, +90 = right, -90 = left.
 Controls: move W=forward, S=back, A=strafe left, D=strafe right; look left/right turns the camera.
 Pick ONE action per step with duration_ms 300-1500. Keep "reason" to one short sentence.
